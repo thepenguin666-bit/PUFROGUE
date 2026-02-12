@@ -1,0 +1,17 @@
+/* RogueWeb — Görsel Ayarlar */
+body {
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    /* Scrollbar'ları gizle */
+    background-color: #000;
+    /* Kenarlarda boşluk kalırsa siyah olsun */
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+}
+
+canvas {
+    display: block;
+}

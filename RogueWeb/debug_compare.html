@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="tr">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Sprite Debugger (Compared)</title>
+    <style>
+        body {
+            background-color: #333;
+            color: white;
+            font-family: sans-serif;
+            text-align: center;
+        }
+
+        .frame-container {
+            display: inline-block;
+            margin: 10px;
+        }
+
+        .frame {
+            width: 754px;
+            height: 754px;
+            background-repeat: no-repeat;
+            border: 2px solid red;
+            zoom: 0.3;
+        }
+
+        .original {
+            background-image: url('assets/run.png');
+            border-color: red;
+        }
+
+        .fixed {
+            background-image: url('assets/run_fixed.png');
+            border-color: lime;
+        }
+
+        .label {
+            margin-top: 5px;
+            font-size: 24px;
+        }
+
+        .row {
+            margin-bottom: 50px;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>Sprite Sheet Karşılaştırması</h1>
+
+    <div class="row">
+        <h2>Orijinal (Titreyen)</h2>
+        <div id="grid-original"></div>
+    </div>
+
+    <div class="row">
+        <h2>Düzeltilmiş (run_fixed.png)</h2>
+        <div id="grid-fixed"></div>
+    </div>
+
+    <script>
+        const frames = 8;
+        const width = 754;
+
+        function createGrid(id, type) {
+            const grid = document.getElementById(id);
+            for (let i = 0; i < frames; i++) {
+                const container = document.createElement('div');
+                container.className = 'frame-container';
+
+                const div = document.createElement('div');
+                div.className = `frame ${type}`;
+                div.style.backgroundPosition = `-${i * width}px 0px`;
+
+                const label = document.createElement('div');
+                label.className = 'label';
+                label.innerText = `Frame ${i + 1}`;
+
+                container.appendChild(div);
+                container.appendChild(label);
+                grid.appendChild(container);
+            }
+        }
+
+        createGrid('grid-original', 'original');
+        createGrid('grid-fixed', 'fixed');
+    </script>
+</body>
+
+</html>

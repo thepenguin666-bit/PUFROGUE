@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="tr">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Sprite Debugger</title>
+    <style>
+        body {
+            background-color: #333;
+            color: white;
+            font-family: sans-serif;
+            text-align: center;
+        }
+
+        .frame-container {
+            display: inline-block;
+            margin: 10px;
+        }
+
+        .frame {
+            width: 754px;
+            height: 754px;
+            background-image: url('assets/run.png');
+            background-repeat: no-repeat;
+            border: 2px solid red;
+            /* Kırmızı çerçeve referans noktasıdır */
+            /* Transform scale to make it fit on screen better if needed, but keeping 1:1 for accuracy */
+            zoom: 0.5;
+        }
+
+        .label {
+            margin-top: 5px;
+            font-size: 24px;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>Sprite Sheet Frame Analizi</h1>
+    <p>Her bir kare (754x754) kırmızı kutunun tam içinde gösteriliyor. Eğer karakter kutu içinde yukarı/aşağı/sağa/sola
+        oynuyorsa, sorun görseldedir.</p>
+
+    <div id="grid"></div>
+
+    <script>
+        const grid = document.getElementById('grid');
+        const frames = 8;
+        const width = 754;
+
+        for (let i = 0; i < frames; i++) {
+            const container = document.createElement('div');
+            container.className = 'frame-container';
+
+            const div = document.createElement('div');
+            div.className = 'frame';
+            div.style.backgroundPosition = `-${i * width}px 0px`;
+
+            const label = document.createElement('div');
+            label.className = 'label';
+            label.innerText = `Frame ${i + 1}`;
+
+            container.appendChild(div);
+            container.appendChild(label);
+            grid.appendChild(container);
+        }
+    </script>
+</body>
+
+</html>
