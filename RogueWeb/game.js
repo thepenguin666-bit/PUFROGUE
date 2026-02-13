@@ -75,11 +75,7 @@ const DASH_DURATION = 10; // Frame
 const DASH_COOLDOWN = 20;
 const DASH_STAMINA_COST = 2;
 let dashCooldownTimer = 0;
-let lastRightTap = 0;
-let lastLeftTap = 0;
-let rightKeyWasReleased = true;
-let leftKeyWasReleased = true;
-const DOUBLE_TAP_WINDOW = 250; // ms
+let spaceWasReleased = true;
 
 // Dash rüzgar partikülleri
 const dashParticles = [];
@@ -433,51 +429,24 @@ window.addEventListener('keydown', (e) => {
         state.isAirAttacking = true;
     }
 
-    // Double-tap dash algılama
-    if (e.key === 'ArrowRight' && !state.isDashing && !state.isAttacking && dashCooldownTimer <= 0) {
-        if (rightKeyWasReleased) {
-            const now = Date.now();
-            if (now - lastRightTap < DOUBLE_TAP_WINDOW && playerStamina >= DASH_STAMINA_COST) {
-                state.isDashing = true;
-                state.dashTimer = DASH_DURATION;
-                state.dashDirection = 1;
-                state.facingRight = true;
-                state.dashFrameIndex = runFrameIndex;
-                state.preDashVy = state.vy;
-                playerStamina -= DASH_STAMINA_COST;
-                dashCooldownTimer = DASH_COOLDOWN;
-                lastRightTap = 0;
-            } else {
-                lastRightTap = now;
-            }
-            rightKeyWasReleased = false;
-        }
-    }
-    if (e.key === 'ArrowLeft' && !state.isDashing && !state.isAttacking && dashCooldownTimer <= 0) {
-        if (leftKeyWasReleased) {
-            const now = Date.now();
-            if (now - lastLeftTap < DOUBLE_TAP_WINDOW && playerStamina >= DASH_STAMINA_COST) {
-                state.isDashing = true;
-                state.dashTimer = DASH_DURATION;
-                state.dashDirection = -1;
-                state.facingRight = false;
-                state.dashFrameIndex = runFrameIndex;
-                state.preDashVy = state.vy;
-                playerStamina -= DASH_STAMINA_COST;
-                dashCooldownTimer = DASH_COOLDOWN;
-                lastLeftTap = 0;
-            } else {
-                lastLeftTap = now;
-            }
-            leftKeyWasReleased = false;
+    // Space tuşu ile dash
+    if (e.key === ' ' && !state.isDashing && !state.isAttacking && dashCooldownTimer <= 0 && spaceWasReleased) {
+        if (playerStamina >= DASH_STAMINA_COST) {
+            state.isDashing = true;
+            state.dashTimer = DASH_DURATION;
+            state.dashDirection = state.facingRight ? 1 : -1;
+            state.dashFrameIndex = runFrameIndex;
+            state.preDashVy = state.vy;
+            playerStamina -= DASH_STAMINA_COST;
+            dashCooldownTimer = DASH_COOLDOWN;
+            spaceWasReleased = false;
         }
     }
 });
 
 window.addEventListener('keyup', (e) => {
     keys[e.key.toLowerCase()] = false;
-    if (e.key === 'ArrowRight') rightKeyWasReleased = true;
-    if (e.key === 'ArrowLeft') leftKeyWasReleased = true;
+    if (e.key === ' ') spaceWasReleased = true;
 });
 
 function update() {
@@ -601,40 +570,39 @@ function update() {
     }
 
     // === Yerdeki / Platformdaki Mantık ===
-    if (keys['a'] && playerStamina > 0) {
-        if (!state.isAttacking) {
+    if (keys['a']) {
+        if (!state.isAttacking && playerStamina > 0) {
             state.isAttacking = true;
             state.attackStage = 1;
             state.attackTimer = 0;
-            playerStamina--; // İlk saldırı 1 stamina
+            playerStamina--;
         }
 
-        state.attackTimer++;
+        if (state.isAttacking) {
+            state.attackTimer++;
 
-        if (state.attackTimer > ATTACK_DELAY - 5 && state.attackTimer < ATTACK_DELAY) {
-            state.shakeTimer = SHAKE_INTENSITY;
-        } else {
-            state.shakeTimer = 0;
-        }
-
-        if (state.attackTimer >= ATTACK_DELAY) {
-            state.attackTimer = 0;
-            if (playerStamina > 0) {
-                state.attackStage++;
-                playerStamina--; // Her yeni kare 1 stamina
-                if (state.attackStage > 3) {
-                    state.attackStage = 1;
-                }
+            if (state.attackTimer > ATTACK_DELAY - 5 && state.attackTimer < ATTACK_DELAY) {
+                state.shakeTimer = SHAKE_INTENSITY;
             } else {
-                // Stamina bitti -> saldırıyı durdur
-                state.isAttacking = false;
-                state.attackStage = 0;
-                state.attackTimer = 0;
                 state.shakeTimer = 0;
             }
-        }
 
-        state.isRunning = false;
+            if (state.attackTimer >= ATTACK_DELAY) {
+                state.attackTimer = 0;
+                if (playerStamina > 0) {
+                    state.attackStage++;
+                    playerStamina--;
+                    if (state.attackStage > 3) {
+                        state.attackStage = 1;
+                    }
+                } else {
+                    // Stamina bitti -> mevcut stage'de kal, yeni stage açma
+                    // a tuşu bırakılınca saldırı bitecek
+                }
+            }
+
+            state.isRunning = false;
+        }
     } else {
         if (state.isAttacking) {
             state.isAttacking = false;
