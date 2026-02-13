@@ -59,8 +59,28 @@ const state = {
     jumpCount: 0,
     currentGround: 0,
     onPlatform: false,
-    lastHitFrame: -1
+    lastHitFrame: -1,
+    // Dash sistemi
+    isDashing: false,
+    dashTimer: 0,
+    dashDirection: 1, // 1: sağ, -1: sol
+    dashFrameIndex: 0 // Dash sırasında sabit kalan run frame
 };
+
+// Dash Ayarları
+const DASH_SPEED = 35;
+const DASH_DURATION = 10; // Frame
+const DASH_COOLDOWN = 20;
+const DASH_STAMINA_COST = 2;
+let dashCooldownTimer = 0;
+let lastRightTap = 0;
+let lastLeftTap = 0;
+let rightKeyWasReleased = true;
+let leftKeyWasReleased = true;
+const DOUBLE_TAP_WINDOW = 250; // ms
+
+// Dash rüzgar partikülleri
+const dashParticles = [];
 
 // Oyuncu Can Sistemi
 const PLAYER_MAX_HP = 7;
@@ -137,9 +157,9 @@ const DEATH_DURATION = 30;
 
 // Düşman saldırı ayarları
 const ZOMBIE_ATTACK_RANGE = 80; // Ne kadar yaklaşırsa saldırır
-const ZOMBIE_ATTACK_DELAY = 8; // Attack1 -> Attack2 geçiş süresi (2.4x hızlı)
-const ZOMBIE_ATTACK_HITBOX = 120; // Saldırı hasar menzili
-const ZOMBIE_ATTACK_COOLDOWN = 25; // Saldırı arası bekleme (2.4x hızlı)
+const ZOMBIE_ATTACK_DELAY = 16; // Attack1 -> Attack2 geçiş süresi
+const ZOMBIE_ATTACK_HITBOX = 120;
+const ZOMBIE_ATTACK_COOLDOWN = 50; // Saldırı arası bekleme
 
 let frameCount = 0;
 const ENEMY_SPAWN_AHEAD = 2000;
@@ -247,10 +267,50 @@ window.addEventListener('keydown', (e) => {
     if (e.key.toLowerCase() === 'a' && state.isJumping && !state.isAirAttacking) {
         state.isAirAttacking = true;
     }
+
+    // Double-tap dash algılama
+    if (e.key === 'ArrowRight' && !state.isDashing && !state.isAttacking && dashCooldownTimer <= 0) {
+        if (rightKeyWasReleased) {
+            const now = Date.now();
+            if (now - lastRightTap < DOUBLE_TAP_WINDOW && playerStamina >= DASH_STAMINA_COST) {
+                state.isDashing = true;
+                state.dashTimer = DASH_DURATION;
+                state.dashDirection = 1;
+                state.facingRight = true;
+                state.dashFrameIndex = runFrameIndex;
+                playerStamina -= DASH_STAMINA_COST;
+                dashCooldownTimer = DASH_COOLDOWN;
+                lastRightTap = 0;
+            } else {
+                lastRightTap = now;
+            }
+            rightKeyWasReleased = false;
+        }
+    }
+    if (e.key === 'ArrowLeft' && !state.isDashing && !state.isAttacking && dashCooldownTimer <= 0) {
+        if (leftKeyWasReleased) {
+            const now = Date.now();
+            if (now - lastLeftTap < DOUBLE_TAP_WINDOW && playerStamina >= DASH_STAMINA_COST) {
+                state.isDashing = true;
+                state.dashTimer = DASH_DURATION;
+                state.dashDirection = -1;
+                state.facingRight = false;
+                state.dashFrameIndex = runFrameIndex;
+                playerStamina -= DASH_STAMINA_COST;
+                dashCooldownTimer = DASH_COOLDOWN;
+                lastLeftTap = 0;
+            } else {
+                lastLeftTap = now;
+            }
+            leftKeyWasReleased = false;
+        }
+    }
 });
 
 window.addEventListener('keyup', (e) => {
     keys[e.key.toLowerCase()] = false;
+    if (e.key === 'ArrowRight') rightKeyWasReleased = true;
+    if (e.key === 'ArrowLeft') leftKeyWasReleased = true;
 });
 
 function update() {
@@ -258,6 +318,37 @@ function update() {
 
     // Oyuncu hasar bağışıklık sayacı
     if (playerHitCooldown > 0) playerHitCooldown--;
+    if (dashCooldownTimer > 0) dashCooldownTimer--;
+
+    // Dash hareketi
+    if (state.isDashing) {
+        state.dashTimer--;
+        state.x -= DASH_SPEED * state.dashDirection;
+
+        // Rüzgar partikülleri oluştur
+        const charScreenX = canvas.width / 2;
+        const charScreenY = (GROUND_OFFSET + state.y) - cameraY + canvas.height / 2;
+        for (let p = 0; p < 3; p++) {
+            dashParticles.push({
+                x: charScreenX + (-state.dashDirection) * (20 + Math.random() * 30),
+                y: charScreenY + (Math.random() - 0.5) * 80,
+                vx: (-state.dashDirection) * (2 + Math.random() * 4),
+                vy: (Math.random() - 0.5) * 1.5,
+                life: 16 + Math.floor(Math.random() * 10),
+                maxLife: 26,
+                size: 4 + Math.random() * 7
+            });
+        }
+
+        if (state.dashTimer <= 0) {
+            state.isDashing = false;
+        }
+        const targetCameraY = GROUND_OFFSET + state.y;
+        cameraY += (targetCameraY - cameraY) * 0.12;
+        dynamicSpawn();
+        updateEnemies();
+        return;
+    }
 
     // Stamina yenilenmesi
     if (playerStamina < PLAYER_MAX_STAMINA) {
@@ -604,6 +695,29 @@ function draw() {
     // 2. Düşmanları Çiz
     drawEnemies(cameraOffsetY);
 
+    // 2.5 Dash rüzgar partiküllerini çiz
+    for (let i = dashParticles.length - 1; i >= 0; i--) {
+        const p = dashParticles[i];
+        p.x += p.vx;
+        p.y += p.vy;
+        p.life--;
+        if (p.life <= 0) {
+            dashParticles.splice(i, 1);
+            continue;
+        }
+        const alpha = p.life / p.maxLife;
+        ctx.save();
+        ctx.globalAlpha = alpha * 0.6;
+        ctx.fillStyle = '#ccddff';
+        ctx.beginPath();
+        // Yatay çizgi şeklinde rüzgar efekti
+        const w = p.size * 5 * (1 - alpha * 0.3);
+        const h = p.size * 0.7;
+        ctx.ellipse(p.x, p.y, w, h, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+    }
+
     // 3. Karakteri Çiz
     const charScreenX = canvas.width / 2;
     const charScreenY = (GROUND_OFFSET + state.y) - cameraY + canvas.height / 2;
@@ -635,12 +749,14 @@ function draw() {
         if (state.attackStage === 1) currentImg = assets.attack1;
         else if (state.attackStage === 2) currentImg = assets.attack2;
         else if (state.attackStage === 3) currentImg = assets.attack3;
+    } else if (state.isDashing) {
+        currentImg = assets.run; // Dash sırasında run sprite kullan
     } else if (state.isRunning) {
         currentImg = assets.run;
     }
 
     if (currentImg) {
-        if (state.isRunning && !state.isAttacking && !state.isJumping) {
+        if ((state.isRunning || state.isDashing) && !state.isAttacking && !state.isJumping) {
             const frameW = currentImg.width / RUN_FRAMES;
             const frameH = currentImg.height;
             const scaledW = frameW * CHARACTER_SCALE;
@@ -648,9 +764,12 @@ function draw() {
             drawX = -scaledW / 2;
             drawY = -scaledH / 2;
 
+            // Dash sırasında frame sabit kalır
+            const displayFrame = state.isDashing ? state.dashFrameIndex : runFrameIndex;
+
             ctx.drawImage(
                 currentImg,
-                runFrameIndex * frameW, 0, frameW, frameH,
+                displayFrame * frameW, 0, frameW, frameH,
                 drawX, drawY, scaledW, scaledH
             );
 
