@@ -208,9 +208,9 @@ const ATTACK_HITBOX_RANGE = 180;
 const DEATH_DURATION = 30;
 
 // Düşman saldırı ayarları
-const ZOMBIE_ATTACK_RANGE = 80; // Ne kadar yaklaşırsa saldırır
+const ZOMBIE_ATTACK_RANGE = 120; // Ne kadar yaklaşırsa saldırır (80 -> 120 arttırıldı)
 const ZOMBIE_ATTACK_DELAY = 16; // Attack1 -> Attack2 geçiş süresi
-const ZOMBIE_ATTACK_HITBOX = 120;
+const ZOMBIE_ATTACK_HITBOX = 160; // Attack range arttığı için hitbox da arttı (120 -> 160)
 const ZOMBIE_ATTACK_COOLDOWN = 50;
 
 // === PLANT DÜŞMAN SİSTEMİ ===
