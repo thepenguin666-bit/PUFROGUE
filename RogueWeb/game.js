@@ -1,25 +1,49 @@
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
-// Sabit ölçek, viewport kırpma yaklaşımı:
-// Canvas viewport boyutuna uyar (dpr ile keskin render)
-// Pencere küçüldüğünde içerik aynı boyutta kalır, sadece daha az alan görünür
+// 16:9 Sabit Oran Koruması
+// Mevcut ekran yüksekliğini referans alarak 16:9 bir alan oluşturuyoruz
+// Böylece mevcut dikey ayarlar (zemin, zıplama vs) bozulmaz
 const REF_DPR = window.devicePixelRatio || 1;
-const REF_HEIGHT = Math.round(window.screen.height * REF_DPR);
+const TARGET_HEIGHT = window.screen.height; // Referans yükseklik
+const TARGET_WIDTH = Math.round(TARGET_HEIGHT * 16 / 9); // 16:9 oranına göre genişlik
 
-function updateCanvasSize() {
-    const currentDPR = window.devicePixelRatio || 1;
-    // dpr ile çarparak zoom'u nötralize ediyoruz
-    canvas.width = Math.round(window.innerWidth * currentDPR);
-    canvas.height = Math.round(window.innerHeight * currentDPR);
-    canvas.style.width = window.innerWidth + 'px';
-    canvas.style.height = window.innerHeight + 'px';
+// Dahili çözünürlük sabit (yüksek kalite için dpr ile çarpılabilir ama şimdilik screen resolution yeterli)
+// Performans için dpr'yi burada kullanmayıp CSS ile halledebiliriz, ama keskinlik için:
+canvas.width = Math.round(TARGET_WIDTH * REF_DPR);
+canvas.height = Math.round(TARGET_HEIGHT * REF_DPR);
+
+// Referans değerimiz artık bu sabit yükseklik
+const REF_HEIGHT = canvas.height;
+
+function updateCanvasStyle() {
+    // Canvas'ı ekrana sığdır (Letterbox / Contain)
+    const winW = window.innerWidth;
+    const winH = window.innerHeight;
+    const winRatio = winW / winH;
+    const targetRatio = 16 / 9;
+
+    let newStyleWidth, newStyleHeight;
+
+    if (winRatio > targetRatio) {
+        // Ekran daha geniş -> Yüksekliğe göre sığdır
+        newStyleHeight = winH;
+        newStyleWidth = winH * targetRatio;
+    } else {
+        // Ekran daha dar -> Genişliğe göre sığdır
+        newStyleWidth = winW;
+        newStyleHeight = winW / targetRatio;
+    }
+
+    canvas.style.width = newStyleWidth + 'px';
+    canvas.style.height = newStyleHeight + 'px';
+
+    // Ortalamak için margin (CSS flex ile de yapılabilir ama garanti olsun)
+    // style.css'de flex var zaten
 }
-updateCanvasSize();
 
-window.addEventListener('resize', () => {
-    updateCanvasSize();
-});
+updateCanvasStyle();
+window.addEventListener('resize', updateCanvasStyle);
 
 // Görselleri Yükle
 const assets = {};
