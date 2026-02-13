@@ -1322,13 +1322,30 @@ function drawPlantProjectiles(cameraOffsetY) {
     }
 }
 
-function loop() {
-    update();
+let lastTime = 0;
+const FIXED_STEP = 1000 / 60; // 60 FPS saniye başına güncelleme (yaklaşık 16.67ms)
+let accumulator = 0;
+
+function loop(timestamp) {
+    if (!lastTime) lastTime = timestamp;
+    const deltaTime = timestamp - lastTime;
+    lastTime = timestamp;
+
+    // Delta time'ı sınırla (max 100ms) - Eğer tab inaktif kalırsa veya lag olursa oyun kilitlenmesin
+    accumulator += Math.min(deltaTime, 100);
+
+    // Eğer frame drop olursa birden fazla update çalıştırıp yakala
+    // Sonsuz döngü koruması için while yerine max adım sınırı da koyabiliriz ama genelde gerekmez
+    while (accumulator >= FIXED_STEP) {
+        update();
+        accumulator -= FIXED_STEP;
+    }
+
     draw();
     requestAnimationFrame(loop);
 }
 
 loadImages(() => {
     spawnEnemies();
-    loop();
+    requestAnimationFrame(loop);
 });
