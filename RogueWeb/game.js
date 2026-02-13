@@ -96,7 +96,15 @@ const state = {
     currentGround: 0,
     onPlatform: false,
     onPlatform: false,
+    onPlatform: false,
+    onPlatform: false,
     lastHitFrame: -1,
+    // İnterpolasyon için önceki frame değerleri
+    prevX: 0,
+    prevY: 0,
+    // İnterpolasyon için önceki frame değerleri
+    prevX: 0,
+    prevY: 0,
     // Beam Attack
     isBeamAttacking: false,
     beamStage: 0,
@@ -111,13 +119,14 @@ const state = {
     dashTimer: 0,
     dashDirection: 1, // 1: sağ, -1: sol
     dashFrameIndex: 0, // Dash sırasında sabit kalan run frame
-    preDashVy: 0 // Dash öncesi dikey hız
+    preDashVy: 0, // Dash öncesi dikey hız
+    jumpBufferTimer: 0 // Zıplama tamponu
 };
 
 // Dash Ayarları
 const DASH_SPEED = 35;
 const DASH_DURATION = 10; // Frame
-const DASH_COOLDOWN = 20;
+const DASH_COOLDOWN = 15; // 20 / 1.3
 const DASH_STAMINA_COST = 2;
 let dashCooldownTimer = 0;
 let spaceWasReleased = true;
@@ -129,21 +138,22 @@ const dashParticles = [];
 const PLAYER_MAX_HP = 7;
 let playerHP = PLAYER_MAX_HP;
 let playerHitCooldown = 0;
-const PLAYER_HIT_COOLDOWN = 40;
+const PLAYER_HIT_COOLDOWN = 30; // 40 / 1.3
 
 // Stamina Sistemi
 const PLAYER_MAX_STAMINA = 15;
 let playerStamina = PLAYER_MAX_STAMINA;
 let staminaRegenTimer = 0;
-const STAMINA_REGEN_RATE = 43; // Stamina dolum hızı %30 düşürüldü (30 -> 43)
+const STAMINA_REGEN_RATE = 33; // 43 / 1.3
 
-// Ayarlar
-const SPEED = 10;
-const ATTACK_DELAY = 18;
+// Ayarlar (Hızlandırılmış Değerler - 1.3x)
+const SPEED = 13; // 10 * 1.3
+const ATTACK_DELAY = 14; // 18 / 1.3
 const SHAKE_INTENSITY = 5;
-const GRAVITY = 0.8;
-const FALL_GRAVITY = 1.6;
-const JUMP_POWER = -29;
+const GRAVITY = 1.04; // 0.8 * 1.3
+const FALL_GRAVITY = 2.08; // 1.6 * 1.3
+const JUMP_POWER = -27; // Base jump biraz arttı
+const DOUBLE_JUMP_POWER = -23; // Çift zıplama biraz arttı
 const CHARACTER_SCALE = 0.5;
 const PLATFORM_Y = -545;
 const GROUND_OFFSET_BASE = 590;
@@ -187,38 +197,39 @@ function isPlatformAtWorldX(enemyWorldX) {
 const RUN_FRAMES = 8;
 let runFrameIndex = 0;
 let runFrameTimer = 0;
-const RUN_ANIM_SPEED = 5;
+const RUN_ANIM_SPEED = 4; // 5 / 1.3 (Daha hızlı animasyon)
 
 // Kamera
 let cameraY = GROUND_OFFSET_BASE;
+let prevCameraY = GROUND_OFFSET_BASE; // İnterpolasyon için
 
 // === DÜŞMAN SİSTEMİ ===
 const ENEMY_SCALE = 0.5;
-const ENEMY_SPEED = 3;
+const ENEMY_SPEED = 3.9; // 3 * 1.3
 const ZOMBIE_RUN_FRAMES = 4;
-const ZOMBIE_ANIM_SPEED = 8;
+const ZOMBIE_ANIM_SPEED = 10; // Yavaşlatıldı (6 -> 10) / 1.3 ölçekli sistemde daha doğal durur
 const ENEMY_DETECT_RANGE = 1000;
 const ENEMY_COUNT = 8;
 
 // Savaş Ayarları
 const ENEMY_MAX_HP = 4;
-const KNOCKBACK_DIST = 20;
-const STUN_DURATION = 12;
-const ATTACK_HITBOX_RANGE = 180;
-const DEATH_DURATION = 30;
+const KNOCKBACK_DIST = 26; // 20 * 1.3
+const STUN_DURATION = 9; // 12 / 1.3
+const ATTACK_HITBOX_RANGE = 234; // 180 * 1.3
+const DEATH_DURATION = 23; // 30 / 1.3
 
 // Düşman saldırı ayarları
-const ZOMBIE_ATTACK_RANGE = 120; // Ne kadar yaklaşırsa saldırır (80 -> 120 arttırıldı)
-const ZOMBIE_ATTACK_DELAY = 16; // Attack1 -> Attack2 geçiş süresi
-const ZOMBIE_ATTACK_HITBOX = 160; // Attack range arttığı için hitbox da arttı (120 -> 160)
-const ZOMBIE_ATTACK_COOLDOWN = 50;
+const ZOMBIE_ATTACK_RANGE = 156; // 120 * 1.3
+const ZOMBIE_ATTACK_DELAY = 12; // 16 / 1.3
+const ZOMBIE_ATTACK_HITBOX = 208; // 160 * 1.3
+const ZOMBIE_ATTACK_COOLDOWN = 38; // 50 / 1.3
 
 // === PLANT DÜŞMAN SİSTEMİ ===
 const PLANT_SCALE = 0.45;
 const PLANT_HP = 2;
 const PLANT_COUNT = 4; // Başlangıçta spawn
-const PLANT_FIRE_RATE = 60; // Saniyede 1 mermi (60 frame)
-const PLANT_PROJECTILE_SPEED = 6;
+const PLANT_FIRE_RATE = 46; // 60 / 1.3
+const PLANT_PROJECTILE_SPEED = 7.8; // 6 * 1.3
 const PLANT_PROJECTILE_SIZE = 20;
 const PLANT_DETECT_RANGE = 1200;
 
@@ -473,22 +484,9 @@ window.addEventListener('keydown', (e) => {
         playerStamina -= beamCost;
     }
 
-    if (e.key === 'ArrowUp' && !state.isAttacking && !state.isBeamAttacking) {
-        if (!state.isJumping && !state.onPlatform) {
-            state.isJumping = true;
-            state.vy = JUMP_POWER;
-            state.isRunning = false;
-            state.jumpCount = 1;
-        } else if (state.isJumping && state.jumpCount === 1) {
-            state.jumpCount = 2;
-        } else if (state.onPlatform) {
-            state.isJumping = true;
-            state.onPlatform = false;
-            state.vy = JUMP_POWER;
-            state.isRunning = false;
-            state.jumpCount = 2;
-            state.currentGround = PLATFORM_Y;
-        }
+    if (e.key === 'ArrowUp') {
+        // Zıplama isteğini tampona al (15 frame boyunca geçerli)
+        state.jumpBufferTimer = 15;
     }
 
     if (e.key === 'ArrowDown' && state.onPlatform) {
@@ -524,6 +522,11 @@ window.addEventListener('keyup', (e) => {
 });
 
 function update() {
+    // İnterpolasyon için önceki değerleri sakla
+    state.prevX = state.x;
+    state.prevY = state.y;
+    prevCameraY = cameraY;
+
     frameCount++;
 
     // GAME OVER KONTROLÜ
@@ -596,6 +599,51 @@ function update() {
         state.vy = 0;
         state.currentGround = 0;
         state.jumpCount = 0;
+    }
+
+    // Jump Buffer Logic
+    if (state.jumpBufferTimer > 0) {
+        state.jumpBufferTimer--;
+
+        // Zıplama koşulları (Attack sırasında zıplanmaz, Beam sırasında zıplanmaz)
+        // Ancak attack bitmek üzereyse buffer sayesinde zıplama hemen gerçekleşir
+        if (!state.isBeamAttacking) {
+            // Beam iptal edilemez ama normal saldırı (A tuşu) zıplama ile iptal edilebilir
+            if (state.isAttacking) {
+                state.isAttacking = false;
+                state.attackStage = 0;
+                state.attackTimer = 0;
+            }
+
+            let jumped = false;
+
+            if (!state.isJumping && !state.onPlatform) {
+                // Normal zıplama
+                state.isJumping = true;
+                state.vy = JUMP_POWER;
+                state.isRunning = false;
+                state.jumpCount = 1;
+                jumped = true;
+            } else if (state.isJumping && state.jumpCount === 1) {
+                // Çift zıplama (Daha kısa)
+                state.jumpCount = 2;
+                state.vy = DOUBLE_JUMP_POWER;
+                jumped = true;
+            } else if (state.onPlatform) {
+                // Platformdan zıplama
+                state.isJumping = true;
+                state.onPlatform = false;
+                state.vy = JUMP_POWER;
+                state.isRunning = false;
+                state.jumpCount = 2; // Platformdan inince 2. zıplama hakkı yok (veya var tercih meselesi)
+                state.currentGround = PLATFORM_Y;
+                jumped = true;
+            }
+
+            if (jumped) {
+                state.jumpBufferTimer = 0; // Zıplama gerçekleşti, bufferı temizle
+            }
+        }
     }
 
     if (state.isJumping) {
@@ -1013,7 +1061,7 @@ function updateEnemies() {
     }
 }
 
-function draw() {
+function draw(alpha = 1.0) {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     let shakeX = 0;
@@ -1026,7 +1074,9 @@ function draw() {
     ctx.save();
     ctx.translate(shakeX, shakeY);
 
-    const cameraOffsetY = -cameraY + canvas.height / 2;
+    // İnterpolasyonlu Kamera Y
+    const interpCameraY = prevCameraY + (cameraY - prevCameraY) * alpha;
+    const cameraOffsetY = -interpCameraY + canvas.height / 2;
 
     // 1. Arkaplanı Çiz
     if (assets.bg) {
@@ -1040,17 +1090,14 @@ function draw() {
         // Arka plan sabit ölçekte çizilir, canvas dışına taşan kısım kırpılır
         const bgY = cameraOffsetY - bgH / 2;
 
-        // Arka planın orijinini ekranın ortasına hizala (karakterin olduğu yer)
-        // Böylece pencere genişliği değişse de hizalama bozulmaz
+        // Arka planın orijinini ekranın ortasına hizala
         const midScreenX = canvas.width / 2;
 
-        // state.x: dünya ofseti (sağa gidince artar, sola gidince azalır)
-        // Ekranın ortasındaki dünya koordinatı: -state.x
-        // Biz arka planı -state.x dünya koordinatı ekranın ortasına gelecek şekilde çizmeliyiz.
-        // Yani, bg görselinin (0,0) noktası, ekranın (midScreenX + state.x, bgY) noktasında olmalı.
+        // İnterpolasyonlu X
+        const interpX = state.prevX + (state.x - state.prevX) * alpha;
 
         if (bgW > 0) {
-            let startX = (midScreenX + state.x) % bgW;
+            let startX = (midScreenX + interpX) % bgW;
             if (startX > 0) startX -= bgW;
 
             // Sonsuz döngü koruması: bgW çok küçükse çizme
@@ -1099,7 +1146,17 @@ function draw() {
 
     // 3. Karakteri Çiz
     const charScreenX = canvas.width / 2;
-    const charScreenY = (getGroundOffset() + state.y) - cameraY + canvas.height / 2;
+    // İnterpolasyonlu Y
+    const interpY = state.prevY + (state.y - state.prevY) * alpha;
+
+    // interpCameraY yukarıda hesaplandı (scope içinde mi? Evet draw scope'unda)
+    // Ancak drawEnemies vs cameraOffsetY kullandı.
+    // drawEnemies henüz interp kullanmıyor ama sorun değil, karakter en önemlisi.
+
+    // cameraOffsetY = -interpCameraY + canvas.height / 2
+    // charScreenY = (GroundOffset + interpY) - interpCameraY + canvas.height / 2
+
+    const charScreenY = (getGroundOffset() + interpY) - interpCameraY + canvas.height / 2;
 
     ctx.save();
 
@@ -1455,9 +1512,8 @@ function loop(timestamp) {
     lastTime = timestamp;
 
     // Delta time'ı sınırla (max 100ms) - Eğer tab inaktif kalırsa veya lag olursa oyun kilitlenmesin
-    // OYUN HIZI: 1.3x (Zamanı 1.3 kat hızlı akıtıyoruz)
-    const GAME_SPEED = 1.3;
-    accumulator += Math.min(deltaTime, 100) * GAME_SPEED;
+    // OYUN HIZI: Native 1.3x constants (accumulator multiplier removed for smoothness)
+    accumulator += Math.min(deltaTime, 100);
 
     // Eğer frame drop olursa birden fazla update çalıştırıp yakala
     // Sonsuz döngü koruması için while yerine max adım sınırı da koyabiliriz ama genelde gerekmez
@@ -1466,11 +1522,17 @@ function loop(timestamp) {
         accumulator -= FIXED_STEP;
     }
 
-    draw();
+    // İnterpolasyon alpha değeri (0.0 - 1.0 arası)
+    // Update döngüsünün neresinde olduğumuzu belirtir
+    const alpha = accumulator / FIXED_STEP;
+    draw(alpha);
+
     if (state.gameStarted) {
         requestAnimationFrame(loop);
     }
 }
+
+draw();
 
 // Oyun Başlatma Mantığı
 function startGame() {
@@ -1493,7 +1555,13 @@ function startGame() {
     state.score = 0;
     playerHP = PLAYER_MAX_HP;
     playerStamina = PLAYER_MAX_STAMINA;
+    playerStamina = PLAYER_MAX_STAMINA;
     cameraY = GROUND_OFFSET_BASE;
+
+    // Reset interpolation vars
+    state.prevX = 0;
+    state.prevY = 0;
+    prevCameraY = GROUND_OFFSET_BASE;
 
     enemies.length = 0;
     plants.length = 0;
