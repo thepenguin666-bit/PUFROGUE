@@ -23,7 +23,8 @@ const imageSources = {
     zombieIdle: 'assets/zombie_idle.png',
     zombieRun: 'assets/zombie_run.png',
     zombieAttack1: 'assets/zombie_attack1.png',
-    zombieAttack2: 'assets/zombie_attack2.png'
+    zombieAttack2: 'assets/zombie_attack2.png',
+    plant: 'assets/plant.png'
 };
 
 let imagesLoaded = 0;
@@ -64,7 +65,8 @@ const state = {
     isDashing: false,
     dashTimer: 0,
     dashDirection: 1, // 1: sağ, -1: sol
-    dashFrameIndex: 0 // Dash sırasında sabit kalan run frame
+    dashFrameIndex: 0, // Dash sırasında sabit kalan run frame
+    preDashVy: 0 // Dash öncesi dikey hız
 };
 
 // Dash Ayarları
@@ -149,7 +151,7 @@ const ENEMY_DETECT_RANGE = 600;
 const ENEMY_COUNT = 8;
 
 // Savaş Ayarları
-const ENEMY_MAX_HP = 6;
+const ENEMY_MAX_HP = 4;
 const KNOCKBACK_DIST = 20;
 const STUN_DURATION = 12;
 const ATTACK_HITBOX_RANGE = 180;
@@ -159,7 +161,19 @@ const DEATH_DURATION = 30;
 const ZOMBIE_ATTACK_RANGE = 80; // Ne kadar yaklaşırsa saldırır
 const ZOMBIE_ATTACK_DELAY = 16; // Attack1 -> Attack2 geçiş süresi
 const ZOMBIE_ATTACK_HITBOX = 120;
-const ZOMBIE_ATTACK_COOLDOWN = 50; // Saldırı arası bekleme
+const ZOMBIE_ATTACK_COOLDOWN = 50;
+
+// === PLANT DÜŞMAN SİSTEMİ ===
+const PLANT_SCALE = 0.45;
+const PLANT_HP = 2;
+const PLANT_COUNT = 4; // Başlangıçta spawn
+const PLANT_FIRE_RATE = 40; // Her 40 frame'de ateş = 2 saniyede 3
+const PLANT_PROJECTILE_SPEED = 6;
+const PLANT_PROJECTILE_SIZE = 20;
+const PLANT_DETECT_RANGE = 1200;
+
+const plants = [];
+const plantProjectiles = [];
 
 let frameCount = 0;
 const ENEMY_SPAWN_AHEAD = 2000;
@@ -206,6 +220,17 @@ function spawnEnemies() {
 
         createEnemy(worldX, worldY);
     }
+
+    // Plant düşmanları
+    for (let i = 0; i < PLANT_COUNT; i++) {
+        let worldX = (Math.random() - 0.3) * 8000;
+        if (Math.abs(worldX) < 600) worldX += 900 * (Math.random() > 0.5 ? 1 : -1);
+        let worldY = 0;
+        if (Math.random() < 0.4 && isPlatformAtWorldX(worldX)) {
+            worldY = PLATFORM_Y;
+        }
+        createPlant(worldX, worldY);
+    }
 }
 
 function dynamicSpawn() {
@@ -218,6 +243,12 @@ function dynamicSpawn() {
             const worldY = Math.random() < 0.35 ? PLATFORM_Y : 0;
             createEnemy(spawnX, worldY);
         }
+        // Dinamik plant spawn (sağ)
+        if (Math.random() < 0.5) {
+            const spawnX = furthestSpawnedRight + 400 + Math.random() * 600;
+            const worldY = (Math.random() < 0.35 && isPlatformAtWorldX(spawnX)) ? PLATFORM_Y : 0;
+            createPlant(spawnX, worldY);
+        }
         furthestSpawnedRight += 1500;
     }
 
@@ -228,7 +259,141 @@ function dynamicSpawn() {
             const worldY = Math.random() < 0.35 ? PLATFORM_Y : 0;
             createEnemy(spawnX, worldY);
         }
+        // Dinamik plant spawn
+        if (Math.random() < 0.5) {
+            const spawnX = furthestSpawnedLeft - 200 - Math.random() * 600;
+            const worldY = (Math.random() < 0.35 && isPlatformAtWorldX(spawnX)) ? PLATFORM_Y : 0;
+            createPlant(spawnX, worldY);
+        }
         furthestSpawnedLeft -= 1500;
+    }
+}
+
+// === PLANT FONKSİYONLARI ===
+function createPlant(worldX, worldY) {
+    plants.push({
+        worldX: worldX,
+        worldY: worldY,
+        hp: PLANT_HP,
+        isDying: false,
+        deathTimer: 0,
+        isDead: false,
+        fireTimer: Math.floor(Math.random() * PLANT_FIRE_RATE), // Desenkronize ateş
+        swayPhase: Math.random() * Math.PI * 2,
+        lastHitStage: -1,
+        isStunned: false,
+        stunTimer: 0,
+        facingRight: Math.random() > 0.5
+    });
+}
+
+function updatePlants() {
+    const playerWorldX = -state.x;
+    const playerWorldY = state.y;
+
+    // Plant saldırı çarpışma kontrolü (oyuncu saldırısı)
+    const isGroundAttack = state.isAttacking && state.attackStage > 0;
+    const isAirAttack = state.isAirAttacking && state.isJumping;
+    if (isGroundAttack || isAirAttack) {
+        for (const plant of plants) {
+            if (plant.isDead || plant.isDying) continue;
+            if (isGroundAttack && plant.lastHitStage === state.attackStage) continue;
+            if (isAirAttack && plant.lastHitStage === 'air') continue;
+
+            const distX = plant.worldX - playerWorldX;
+            const absDist = Math.abs(distX);
+            if (absDist < ATTACK_HITBOX_RANGE) {
+                const isRight = distX > 0;
+                if ((state.facingRight && isRight) || (!state.facingRight && !isRight)) {
+                    plant.hp--;
+                    plant.lastHitStage = isAirAttack ? 'air' : state.attackStage;
+                    plant.isStunned = true;
+                    plant.stunTimer = STUN_DURATION;
+                    if (plant.hp <= 0) {
+                        plant.isDying = true;
+                        plant.deathTimer = DEATH_DURATION;
+                        plant.hp = 0;
+                    }
+                }
+            }
+        }
+    }
+
+    for (let i = plants.length - 1; i >= 0; i--) {
+        const plant = plants[i];
+
+        if (plant.isDead) {
+            plants.splice(i, 1);
+            continue;
+        }
+
+        if (plant.isDying) {
+            plant.deathTimer--;
+            if (plant.deathTimer <= 0) plant.isDead = true;
+            continue;
+        }
+
+        if (plant.isStunned) {
+            plant.stunTimer--;
+            if (plant.stunTimer <= 0) {
+                plant.isStunned = false;
+                plant.lastHitStage = -1;
+            }
+            continue;
+        }
+
+        // Salınım fazı güncelle
+        plant.swayPhase += 0.05;
+
+        // Ateş etme
+        const distX = playerWorldX - plant.worldX;
+        const distY = Math.abs(playerWorldY - plant.worldY);
+        if (Math.abs(distX) < PLANT_DETECT_RANGE && distY < 200) {
+            plant.facingRight = distX > 0;
+            plant.fireTimer++;
+            if (plant.fireTimer >= PLANT_FIRE_RATE) {
+                plant.fireTimer = 0;
+                // Mor mermi oluştur
+                plantProjectiles.push({
+                    worldX: plant.worldX,
+                    worldY: plant.worldY,
+                    vx: plant.facingRight ? PLANT_PROJECTILE_SPEED : -PLANT_PROJECTILE_SPEED,
+                    life: 180 // 3 saniye ömür
+                });
+            }
+        }
+    }
+
+    // Mermileri güncelle
+    for (let i = plantProjectiles.length - 1; i >= 0; i--) {
+        const proj = plantProjectiles[i];
+        proj.worldX += proj.vx;
+        proj.life--;
+
+        if (proj.life <= 0) {
+            plantProjectiles.splice(i, 1);
+            continue;
+        }
+
+        // Saldırıyla mermi yok etme (yerde veya havada)
+        const dx = proj.worldX - playerWorldX;
+        const dy = proj.worldY - playerWorldY;
+        const attacking = (state.isAttacking && state.attackStage > 0) || (state.isAirAttacking && state.isJumping);
+        if (attacking && Math.abs(dx) < ATTACK_HITBOX_RANGE && Math.abs(dy) < 80) {
+            const isRight = dx > 0;
+            if ((state.facingRight && isRight) || (!state.facingRight && !isRight)) {
+                plantProjectiles.splice(i, 1);
+                continue;
+            }
+        }
+
+        // Oyuncuyla çarpışma (saldırı dışında hasar)
+        if (Math.abs(dx) < 40 && Math.abs(dy) < 60 && playerHitCooldown <= 0 && !attacking) {
+            playerHP--;
+            playerHitCooldown = PLAYER_HIT_COOLDOWN;
+            if (playerHP < 0) playerHP = 0;
+            plantProjectiles.splice(i, 1);
+        }
     }
 }
 
@@ -278,6 +443,7 @@ window.addEventListener('keydown', (e) => {
                 state.dashDirection = 1;
                 state.facingRight = true;
                 state.dashFrameIndex = runFrameIndex;
+                state.preDashVy = state.vy;
                 playerStamina -= DASH_STAMINA_COST;
                 dashCooldownTimer = DASH_COOLDOWN;
                 lastRightTap = 0;
@@ -296,6 +462,7 @@ window.addEventListener('keydown', (e) => {
                 state.dashDirection = -1;
                 state.facingRight = false;
                 state.dashFrameIndex = runFrameIndex;
+                state.preDashVy = state.vy;
                 playerStamina -= DASH_STAMINA_COST;
                 dashCooldownTimer = DASH_COOLDOWN;
                 lastLeftTap = 0;
@@ -342,11 +509,16 @@ function update() {
 
         if (state.dashTimer <= 0) {
             state.isDashing = false;
+            // Havadaysa düşmeye devam etsin
+            if (state.isJumping) {
+                state.vy = state.preDashVy > 0 ? state.preDashVy : 2;
+            }
         }
         const targetCameraY = GROUND_OFFSET + state.y;
         cameraY += (targetCameraY - cameraY) * 0.12;
         dynamicSpawn();
         updateEnemies();
+        updatePlants();
         return;
     }
 
@@ -391,6 +563,7 @@ function update() {
                 cameraY += (targetCameraY - cameraY) * 0.12;
                 dynamicSpawn();
                 updateEnemies();
+                updatePlants();
                 return;
             }
         }
@@ -423,6 +596,7 @@ function update() {
 
         dynamicSpawn();
         updateEnemies();
+        updatePlants();
         return;
     }
 
@@ -496,17 +670,22 @@ function update() {
 
     dynamicSpawn();
     updateEnemies();
+    updatePlants();
 }
 
 function checkAttackHit() {
-    if (!state.isAttacking || state.attackStage === 0) return;
+    // Yerdeki saldırı veya havadaki saldırı
+    const isGroundAttack = state.isAttacking && state.attackStage > 0;
+    const isAirAttack = state.isAirAttacking && state.isJumping;
+    if (!isGroundAttack && !isAirAttack) return;
 
     const playerWorldX = -state.x;
 
     for (const enemy of enemies) {
         if (enemy.isDead || enemy.isDying) continue;
 
-        if (enemy.lastHitStage === state.attackStage) continue;
+        if (isGroundAttack && enemy.lastHitStage === state.attackStage) continue;
+        if (isAirAttack && enemy.lastHitStage === 'air') continue;
 
         const distX = enemy.worldX - playerWorldX;
         const absDist = Math.abs(distX);
@@ -515,7 +694,7 @@ function checkAttackHit() {
             const enemyIsRight = distX > 0;
             if ((state.facingRight && enemyIsRight) || (!state.facingRight && !enemyIsRight)) {
                 enemy.hp--;
-                enemy.lastHitStage = state.attackStage;
+                enemy.lastHitStage = isAirAttack ? 'air' : state.attackStage;
                 enemy.isStunned = true;
                 enemy.stunTimer = STUN_DURATION;
                 enemy.isAttacking = false;
@@ -694,6 +873,12 @@ function draw() {
 
     // 2. Düşmanları Çiz
     drawEnemies(cameraOffsetY);
+
+    // 2.1 Plant düşmanları çiz
+    drawPlants(cameraOffsetY);
+
+    // 2.2 Plant mermilerini çiz
+    drawPlantProjectiles(cameraOffsetY);
 
     // 2.5 Dash rüzgar partiküllerini çiz
     for (let i = dashParticles.length - 1; i >= 0; i--) {
@@ -1010,6 +1195,100 @@ function drawPlayerStaminaBar() {
     ctx.beginPath();
     ctx.roundRect(barX - 2, barY - 1, barWidth + 4, barHeight + 2, radius);
     ctx.stroke();
+}
+
+function drawPlants(cameraOffsetY) {
+    for (const plant of plants) {
+        if (plant.isDead) continue;
+
+        const screenX = plant.worldX + state.x + canvas.width / 2;
+        if (screenX < -300 || screenX > canvas.width + 300) continue;
+
+        const screenY = (GROUND_OFFSET + plant.worldY) - cameraY + canvas.height / 2 + 20;
+
+        ctx.save();
+
+        if (plant.isDying) {
+            const progress = 1 - (plant.deathTimer / DEATH_DURATION);
+            ctx.globalAlpha = 1 - progress;
+            const sx = (Math.random() - 0.5) * (1 - progress) * 8;
+            const sy = (Math.random() - 0.5) * (1 - progress) * 8;
+            ctx.translate(screenX + sx, screenY + sy);
+        } else if (plant.isStunned) {
+            const sx = (Math.random() - 0.5) * 6;
+            ctx.translate(screenX + sx, screenY);
+        } else {
+            // Salınım hareketi
+            const sway = Math.sin(plant.swayPhase) * 3;
+            ctx.translate(screenX + sway, screenY);
+        }
+
+        if (!plant.facingRight) {
+            ctx.scale(-1, 1);
+        }
+
+        if (assets.plant) {
+            const img = assets.plant;
+            const scaledW = img.width * PLANT_SCALE;
+            const scaledH = img.height * PLANT_SCALE;
+            ctx.drawImage(img, -scaledW / 2, -scaledH / 2, scaledW, scaledH);
+        }
+
+        ctx.restore();
+
+        // Can barı
+        if (!plant.isDying) {
+            const barWidth = 40;
+            const barHeight = 6;
+            const barY2 = screenY - 80;
+            const barX2 = screenX - barWidth / 2;
+
+            ctx.fillStyle = 'rgba(40, 0, 0, 0.8)';
+            ctx.fillRect(barX2 - 1, barY2 - 1, barWidth + 2, barHeight + 2);
+
+            const hpRatio = plant.hp / PLANT_HP;
+            ctx.fillStyle = '#ff2222';
+            ctx.fillRect(barX2, barY2, barWidth * hpRatio, barHeight);
+
+            ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+            ctx.lineWidth = 1;
+            const lx = barX2 + barWidth / 2;
+            ctx.beginPath();
+            ctx.moveTo(lx, barY2);
+            ctx.lineTo(lx, barY2 + barHeight);
+            ctx.stroke();
+
+            ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+            ctx.strokeRect(barX2 - 1, barY2 - 1, barWidth + 2, barHeight + 2);
+        }
+    }
+}
+
+function drawPlantProjectiles(cameraOffsetY) {
+    for (const proj of plantProjectiles) {
+        const screenX = proj.worldX + state.x + canvas.width / 2;
+        const screenY = (GROUND_OFFSET + proj.worldY) - cameraY + canvas.height / 2 + 20;
+
+        if (screenX < -50 || screenX > canvas.width + 50) continue;
+
+        ctx.save();
+        // Mor parlayan mermi
+        const glow = ctx.createRadialGradient(screenX, screenY, 0, screenX, screenY, PLANT_PROJECTILE_SIZE * 2);
+        glow.addColorStop(0, 'rgba(180, 0, 255, 0.8)');
+        glow.addColorStop(0.5, 'rgba(120, 0, 200, 0.4)');
+        glow.addColorStop(1, 'rgba(80, 0, 160, 0)');
+        ctx.fillStyle = glow;
+        ctx.beginPath();
+        ctx.arc(screenX, screenY, PLANT_PROJECTILE_SIZE * 2, 0, Math.PI * 2);
+        ctx.fill();
+
+        // İç çekirdek
+        ctx.fillStyle = '#cc44ff';
+        ctx.beginPath();
+        ctx.arc(screenX, screenY, PLANT_PROJECTILE_SIZE * 0.6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+    }
 }
 
 function loop() {
