@@ -135,7 +135,7 @@ const PLAYER_HIT_COOLDOWN = 40;
 const PLAYER_MAX_STAMINA = 15;
 let playerStamina = PLAYER_MAX_STAMINA;
 let staminaRegenTimer = 0;
-const STAMINA_REGEN_RATE = 30; // Her 30 frame'de (0.5 saniye) 1 stamina = saniyede 2
+const STAMINA_REGEN_RATE = 43; // Stamina dolum hızı %30 düşürüldü (30 -> 43)
 
 // Ayarlar
 const SPEED = 10;
@@ -358,7 +358,11 @@ function updatePlants() {
             const absDist = Math.abs(distX);
             if (absDist < ATTACK_HITBOX_RANGE) {
                 const isRight = distX > 0;
-                if ((state.facingRight && isRight) || (!state.facingRight && !isRight)) {
+                // Eğer çok yakınsa (iç içeyse) yön farketmeksizin vurabilsin (40px)
+                // Değilse, karakterin baktığı yönde olmalı
+                const isCloseRange = absDist < 40;
+
+                if (isCloseRange || (state.facingRight && isRight) || (!state.facingRight && !isRight)) {
                     plant.hp--;
                     plant.lastHitStage = isAirAttack ? 'air' : state.attackStage;
                     plant.isStunned = true;
@@ -694,11 +698,11 @@ function update() {
     }
 
     if (keys['a']) {
-        if (!state.isAttacking && playerStamina > 0) {
+        if (!state.isAttacking) {
             state.isAttacking = true;
             state.attackStage = 1;
             state.attackTimer = 0;
-            playerStamina--;
+            // playerStamina--; // Stamina maliyeti kaldırıldı
         }
 
         if (state.isAttacking) {
@@ -707,21 +711,14 @@ function update() {
             if (state.attackTimer > ATTACK_DELAY - 5 && state.attackTimer < ATTACK_DELAY) {
                 state.shakeTimer = SHAKE_INTENSITY;
             }
-            // Shake timer update içinde global azaltılmalı, burada değil.
-            // Fakat mevcut kod yapısında update() başında azaltılmıyor, o yüzden buraya ekliyoruz:
             if (state.shakeTimer > 0) state.shakeTimer--;
 
             if (state.attackTimer >= ATTACK_DELAY) {
                 state.attackTimer = 0;
-                if (playerStamina > 0) {
-                    state.attackStage++;
-                    playerStamina--;
-                    if (state.attackStage > 3) {
-                        state.attackStage = 1;
-                    }
-                } else {
-                    // Stamina bitti -> mevcut stage'de kal, yeni stage açma
-                    // a tuşu bırakılınca saldırı bitecek
+                // Stamina kontrolü kaldırıldı, sonsuz kombo
+                state.attackStage++;
+                if (state.attackStage > 3) {
+                    state.attackStage = 1;
                 }
             }
 
