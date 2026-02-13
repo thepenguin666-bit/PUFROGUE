@@ -1,11 +1,9 @@
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
-// Tam ekran yap
 canvas.width = window.innerWidth;
 canvas.height = window.innerHeight;
 
-// Pencere boyutu değişirse canvas'ı güncelle
 window.addEventListener('resize', () => {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
@@ -21,7 +19,11 @@ const imageSources = {
     jump: 'assets/jump.png',
     attack1: 'assets/attack1.png',
     attack2: 'assets/attack2.png',
-    attack3: 'assets/attack3.png'
+    attack3: 'assets/attack3.png',
+    zombieIdle: 'assets/zombie_idle.png',
+    zombieRun: 'assets/zombie_run.png',
+    zombieAttack1: 'assets/zombie_attack1.png',
+    zombieAttack2: 'assets/zombie_attack2.png'
 };
 
 let imagesLoaded = 0;
@@ -50,12 +52,27 @@ const state = {
     attackStage: 0,
     attackTimer: 0,
     shakeTimer: 0,
-    // Jump properties
     y: 0,
     vy: 0,
     isJumping: false,
-    isAirAttacking: false
+    isAirAttacking: false,
+    jumpCount: 0,
+    currentGround: 0,
+    onPlatform: false,
+    lastHitFrame: -1
 };
+
+// Oyuncu Can Sistemi
+const PLAYER_MAX_HP = 7;
+let playerHP = PLAYER_MAX_HP;
+let playerHitCooldown = 0;
+const PLAYER_HIT_COOLDOWN = 40;
+
+// Stamina Sistemi
+const PLAYER_MAX_STAMINA = 15;
+let playerStamina = PLAYER_MAX_STAMINA;
+let staminaRegenTimer = 0;
+const STAMINA_REGEN_RATE = 60; // Her 60 frame'de (1 saniye) 1 stamina
 
 // Ayarlar
 const SPEED = 10;
@@ -64,7 +81,35 @@ const SHAKE_INTENSITY = 5;
 const GRAVITY = 0.8;
 const FALL_GRAVITY = 1.6;
 const JUMP_POWER = -25;
-const CHARACTER_SCALE = 0.5; // Karakter yarı boyut
+const CHARACTER_SCALE = 0.5;
+const PLATFORM_Y = -350;
+const GROUND_OFFSET = 210;
+
+// Platform Boşluk Bölgesi
+const PLATFORM_GAP_START = 2500;
+const PLATFORM_GAP_END = 6400;
+
+function isPlatformAvailable() {
+    if (!assets.bg) return true;
+    const bgW_original = assets.bg.width;
+    let worldX = -state.x;
+    const scale = canvas.height / assets.bg.height;
+    let bgX = worldX / scale;
+    bgX = bgX % bgW_original;
+    if (bgX < 0) bgX += bgW_original;
+    return !(bgX >= PLATFORM_GAP_START && bgX <= PLATFORM_GAP_END);
+}
+
+// Düşmanlar için dünya X koordinatına göre platform kontrolü
+function isPlatformAtWorldX(enemyWorldX) {
+    if (!assets.bg) return true;
+    const bgW_original = assets.bg.width;
+    const scale = canvas.height / assets.bg.height;
+    let bgX = enemyWorldX / scale;
+    bgX = bgX % bgW_original;
+    if (bgX < 0) bgX += bgW_original;
+    return !(bgX >= PLATFORM_GAP_START && bgX <= PLATFORM_GAP_END);
+}
 
 // Spritesheet Ayarları
 const RUN_FRAMES = 8;
@@ -72,20 +117,133 @@ let runFrameIndex = 0;
 let runFrameTimer = 0;
 const RUN_ANIM_SPEED = 5;
 
+// Kamera
+let cameraY = GROUND_OFFSET;
+
+// === DÜŞMAN SİSTEMİ ===
+const ENEMY_SCALE = 0.5;
+const ENEMY_SPEED = 3;
+const ZOMBIE_RUN_FRAMES = 4;
+const ZOMBIE_ANIM_SPEED = 8;
+const ENEMY_DETECT_RANGE = 600;
+const ENEMY_COUNT = 8;
+
+// Savaş Ayarları
+const ENEMY_MAX_HP = 6;
+const KNOCKBACK_DIST = 20;
+const STUN_DURATION = 12;
+const ATTACK_HITBOX_RANGE = 180;
+const DEATH_DURATION = 30;
+
+// Düşman saldırı ayarları
+const ZOMBIE_ATTACK_RANGE = 80; // Ne kadar yaklaşırsa saldırır
+const ZOMBIE_ATTACK_DELAY = 8; // Attack1 -> Attack2 geçiş süresi (2.4x hızlı)
+const ZOMBIE_ATTACK_HITBOX = 120; // Saldırı hasar menzili
+const ZOMBIE_ATTACK_COOLDOWN = 25; // Saldırı arası bekleme (2.4x hızlı)
+
+let frameCount = 0;
+const ENEMY_SPAWN_AHEAD = 2000;
+let furthestSpawnedRight = 5000;
+let furthestSpawnedLeft = -3000;
+
+const enemies = [];
+
+function createEnemy(worldX, worldY) {
+    enemies.push({
+        worldX: worldX,
+        worldY: worldY,
+        facingRight: Math.random() > 0.5,
+        isChasing: false,
+        frameIndex: 0,
+        frameTimer: 0,
+        hp: ENEMY_MAX_HP,
+        stunTimer: 0,
+        isStunned: false,
+        isDying: false,
+        deathTimer: 0,
+        isDead: false,
+        lastHitStage: -1,
+        vy: 0,
+        isFalling: false,
+        // Düşman saldırı sistemi
+        isAttacking: false,
+        attackStage: 0, // 0: yok, 1: attack1, 2: attack2
+        attackTimer: 0,
+        attackCooldown: 0,
+        hasDealtDamage: false // Bu saldırı döngüsünde hasar verdi mi
+    });
+}
+
+function spawnEnemies() {
+    for (let i = 0; i < ENEMY_COUNT; i++) {
+        let worldX = (Math.random() - 0.3) * 8000;
+        if (Math.abs(worldX) < 500) worldX += 800 * (Math.random() > 0.5 ? 1 : -1);
+
+        let worldY = 0;
+        if (Math.random() < 0.4) {
+            worldY = PLATFORM_Y;
+        }
+
+        createEnemy(worldX, worldY);
+    }
+}
+
+function dynamicSpawn() {
+    const playerWorldX = -state.x;
+
+    if (playerWorldX + ENEMY_SPAWN_AHEAD > furthestSpawnedRight) {
+        const count = 2 + Math.floor(Math.random() * 3);
+        for (let i = 0; i < count; i++) {
+            const spawnX = furthestSpawnedRight + 300 + Math.random() * 800;
+            const worldY = Math.random() < 0.35 ? PLATFORM_Y : 0;
+            createEnemy(spawnX, worldY);
+        }
+        furthestSpawnedRight += 1500;
+    }
+
+    if (playerWorldX - ENEMY_SPAWN_AHEAD < furthestSpawnedLeft) {
+        const count = 2 + Math.floor(Math.random() * 3);
+        for (let i = 0; i < count; i++) {
+            const spawnX = furthestSpawnedLeft - 300 - Math.random() * 800;
+            const worldY = Math.random() < 0.35 ? PLATFORM_Y : 0;
+            createEnemy(spawnX, worldY);
+        }
+        furthestSpawnedLeft -= 1500;
+    }
+}
+
 // Tuş Kontrolü
 const keys = {};
 
 window.addEventListener('keydown', (e) => {
     keys[e.key.toLowerCase()] = true;
 
-    // Zıplama Tetikleyicisi
-    if (e.key === 'ArrowUp' && !state.isJumping && !state.isAttacking) {
-        state.isJumping = true;
-        state.vy = JUMP_POWER;
-        state.isRunning = false;
+    if (e.key === 'ArrowUp' && !state.isAttacking) {
+        if (!state.isJumping && !state.onPlatform) {
+            state.isJumping = true;
+            state.vy = JUMP_POWER;
+            state.isRunning = false;
+            state.jumpCount = 1;
+        } else if (state.isJumping && state.jumpCount === 1) {
+            state.jumpCount = 2;
+        } else if (state.onPlatform) {
+            state.isJumping = true;
+            state.onPlatform = false;
+            state.vy = JUMP_POWER;
+            state.isRunning = false;
+            state.jumpCount = 2;
+            state.currentGround = PLATFORM_Y;
+        }
     }
 
-    // Havada 'a' basılırsa -> air attack (sadece attack3)
+    if (e.key === 'ArrowDown' && state.onPlatform) {
+        state.onPlatform = false;
+        state.isJumping = true;
+        state.vy = 0;
+        state.currentGround = 0;
+        state.jumpCount = 0;
+    }
+
     if (e.key.toLowerCase() === 'a' && state.isJumping && !state.isAirAttacking) {
         state.isAirAttacking = true;
     }
@@ -96,9 +254,32 @@ window.addEventListener('keyup', (e) => {
 });
 
 function update() {
-    // Havadayken ayrı mantık
+    frameCount++;
+
+    // Oyuncu hasar bağışıklık sayacı
+    if (playerHitCooldown > 0) playerHitCooldown--;
+
+    // Stamina yenilenmesi
+    if (playerStamina < PLAYER_MAX_STAMINA) {
+        staminaRegenTimer++;
+        if (staminaRegenTimer >= STAMINA_REGEN_RATE) {
+            playerStamina++;
+            staminaRegenTimer = 0;
+        }
+    } else {
+        staminaRegenTimer = 0;
+    }
+
+    // Platformdayken boşluk bölgesine girerse düş
+    if (state.onPlatform && !isPlatformAvailable()) {
+        state.onPlatform = false;
+        state.isJumping = true;
+        state.vy = 0;
+        state.currentGround = 0;
+        state.jumpCount = 0;
+    }
+
     if (state.isJumping) {
-        // Zıplama Fiziği
         if (state.vy < 0) {
             state.vy += GRAVITY;
         } else {
@@ -106,15 +287,38 @@ function update() {
         }
         state.y += state.vy;
 
-        // Yere düşme kontrolü
-        if (state.y >= 0) {
-            state.y = 0;
+        if (state.jumpCount >= 2 && state.vy > 0 && state.currentGround === 0 && isPlatformAvailable()) {
+            if (state.y >= PLATFORM_Y) {
+                state.y = PLATFORM_Y;
+                state.vy = 0;
+                state.isJumping = false;
+                state.isAirAttacking = false;
+                state.onPlatform = true;
+                state.currentGround = PLATFORM_Y;
+
+                const targetCameraY = GROUND_OFFSET + state.y;
+                cameraY += (targetCameraY - cameraY) * 0.12;
+                dynamicSpawn();
+                updateEnemies();
+                return;
+            }
+        }
+
+        if (state.y >= state.currentGround) {
+            state.y = state.currentGround;
             state.vy = 0;
             state.isJumping = false;
             state.isAirAttacking = false;
+
+            if (state.currentGround === PLATFORM_Y) {
+                state.onPlatform = true;
+            } else {
+                state.onPlatform = false;
+                state.jumpCount = 0;
+                state.currentGround = 0;
+            }
         }
 
-        // Havada sağa/sola hareket
         if (keys['arrowright']) {
             state.x -= SPEED;
             state.facingRight = true;
@@ -123,42 +327,50 @@ function update() {
             state.facingRight = false;
         }
 
+        const targetCameraY = GROUND_OFFSET + state.y;
+        cameraY += (targetCameraY - cameraY) * 0.12;
+
+        dynamicSpawn();
+        updateEnemies();
         return;
     }
 
-    // === Yerdeki Mantık ===
-
-    // Attack Mantığı - sadece 'a' basılı tutulduğu sürece ilerle
-    if (keys['a']) {
+    // === Yerdeki / Platformdaki Mantık ===
+    if (keys['a'] && playerStamina > 0) {
         if (!state.isAttacking) {
-            // İlk basışta attack başlat
             state.isAttacking = true;
             state.attackStage = 1;
             state.attackTimer = 0;
+            playerStamina--; // İlk saldırı 1 stamina
         }
 
-        // Tuş basılı tutuluyorsa zamanlayıcıyı ilerlet
         state.attackTimer++;
 
-        // Titreme efekti
         if (state.attackTimer > ATTACK_DELAY - 5 && state.attackTimer < ATTACK_DELAY) {
             state.shakeTimer = SHAKE_INTENSITY;
         } else {
             state.shakeTimer = 0;
         }
 
-        // Zamanlayıcı dolduğunda bir sonraki stage'e geç
         if (state.attackTimer >= ATTACK_DELAY) {
             state.attackTimer = 0;
-            state.attackStage++;
-            if (state.attackStage > 3) {
-                state.attackStage = 1; // 3'ten sonra 1'e dön (loop)
+            if (playerStamina > 0) {
+                state.attackStage++;
+                playerStamina--; // Her yeni kare 1 stamina
+                if (state.attackStage > 3) {
+                    state.attackStage = 1;
+                }
+            } else {
+                // Stamina bitti -> saldırıyı durdur
+                state.isAttacking = false;
+                state.attackStage = 0;
+                state.attackTimer = 0;
+                state.shakeTimer = 0;
             }
         }
 
         state.isRunning = false;
     } else {
-        // 'a' tuşu bırakıldığında attack hemen bitsin
         if (state.isAttacking) {
             state.isAttacking = false;
             state.attackStage = 0;
@@ -166,7 +378,6 @@ function update() {
             state.shakeTimer = 0;
         }
 
-        // Hareket Mantığı (Attack yoksa)
         state.isRunning = false;
         if (keys['arrowright']) {
             state.x -= SPEED;
@@ -178,7 +389,6 @@ function update() {
             state.isRunning = true;
         }
 
-        // Koşma Animasyonu
         if (state.isRunning) {
             runFrameTimer++;
             if (runFrameTimer >= RUN_ANIM_SPEED) {
@@ -189,12 +399,177 @@ function update() {
             runFrameIndex = 0;
         }
     }
+
+    const targetCameraY = GROUND_OFFSET + state.y;
+    cameraY += (targetCameraY - cameraY) * 0.12;
+
+    dynamicSpawn();
+    updateEnemies();
+}
+
+function checkAttackHit() {
+    if (!state.isAttacking || state.attackStage === 0) return;
+
+    const playerWorldX = -state.x;
+
+    for (const enemy of enemies) {
+        if (enemy.isDead || enemy.isDying) continue;
+
+        if (enemy.lastHitStage === state.attackStage) continue;
+
+        const distX = enemy.worldX - playerWorldX;
+        const absDist = Math.abs(distX);
+
+        if (absDist < ATTACK_HITBOX_RANGE) {
+            const enemyIsRight = distX > 0;
+            if ((state.facingRight && enemyIsRight) || (!state.facingRight && !enemyIsRight)) {
+                enemy.hp--;
+                enemy.lastHitStage = state.attackStage;
+                enemy.isStunned = true;
+                enemy.stunTimer = STUN_DURATION;
+                enemy.isAttacking = false;
+                enemy.attackStage = 0;
+                enemy.attackTimer = 0;
+
+                const knockDir = enemyIsRight ? 1 : -1;
+                enemy.worldX += knockDir * KNOCKBACK_DIST;
+
+                if (enemy.hp <= 0) {
+                    enemy.isDying = true;
+                    enemy.deathTimer = DEATH_DURATION;
+                    enemy.hp = 0;
+                }
+            }
+        }
+    }
+}
+
+function updateEnemies() {
+    checkAttackHit();
+
+    const playerWorldX = -state.x;
+    const playerWorldY = state.y;
+
+    for (let i = enemies.length - 1; i >= 0; i--) {
+        const enemy = enemies[i];
+
+        if (enemy.isDead) {
+            enemies.splice(i, 1);
+            continue;
+        }
+
+        if (enemy.isDying) {
+            enemy.deathTimer--;
+            if (enemy.deathTimer <= 0) {
+                enemy.isDead = true;
+            }
+            continue;
+        }
+
+        if (enemy.isStunned) {
+            enemy.stunTimer--;
+            if (enemy.stunTimer <= 0) {
+                enemy.isStunned = false;
+                enemy.lastHitStage = -1;
+            }
+            continue;
+        }
+
+        // Saldırı bekleme sayacı
+        if (enemy.attackCooldown > 0) enemy.attackCooldown--;
+
+        // 2. kattaki düşmanlar: platform yoksa düşsün
+        if (enemy.worldY === PLATFORM_Y && !enemy.isFalling) {
+            if (!isPlatformAtWorldX(enemy.worldX)) {
+                enemy.isFalling = true;
+                enemy.vy = 0;
+            }
+        }
+
+        // Düşüş fiziği
+        if (enemy.isFalling) {
+            enemy.vy += FALL_GRAVITY;
+            enemy.worldY += enemy.vy;
+            if (enemy.worldY >= 0) {
+                enemy.worldY = 0;
+                enemy.vy = 0;
+                enemy.isFalling = false;
+            }
+            continue;
+        }
+
+        const distX = playerWorldX - enemy.worldX;
+        const distY = Math.abs(playerWorldY - enemy.worldY);
+        const absDist = Math.abs(distX);
+
+        // Düşman saldırı durumunda
+        if (enemy.isAttacking) {
+            enemy.attackTimer++;
+
+            // Attack1 -> Attack2 geçişi
+            if (enemy.attackStage === 1 && enemy.attackTimer >= ZOMBIE_ATTACK_DELAY) {
+                enemy.attackStage = 2;
+                enemy.attackTimer = 0;
+
+                // Attack2'de hasar kontrolü (hitbox çarpışması)
+                if (!enemy.hasDealtDamage && distY < 100) {
+                    const attackDistX = Math.abs(distX);
+                    if (attackDistX < ZOMBIE_ATTACK_HITBOX && playerHitCooldown <= 0) {
+                        playerHP--;
+                        playerHitCooldown = PLAYER_HIT_COOLDOWN;
+                        enemy.hasDealtDamage = true;
+                        if (playerHP < 0) playerHP = 0;
+                    }
+                }
+            }
+
+            // Attack2 bittikten sonra idle'a dön
+            if (enemy.attackStage === 2 && enemy.attackTimer >= ZOMBIE_ATTACK_DELAY) {
+                enemy.isAttacking = false;
+                enemy.attackStage = 0;
+                enemy.attackTimer = 0;
+                enemy.attackCooldown = ZOMBIE_ATTACK_COOLDOWN;
+                enemy.hasDealtDamage = false;
+            }
+            continue; // Saldırı sırasında hareket etme
+        }
+
+        // Algılama ve kovalama
+        if (absDist < ENEMY_DETECT_RANGE && distY < 200) {
+            enemy.isChasing = true;
+            enemy.facingRight = distX > 0;
+
+            // Saldırı menzilindeyse ve aynı kattaysa saldır
+            if (absDist < ZOMBIE_ATTACK_RANGE && distY < 100 && enemy.attackCooldown <= 0) {
+                enemy.isAttacking = true;
+                enemy.attackStage = 1;
+                enemy.attackTimer = 0;
+                enemy.hasDealtDamage = false;
+                continue;
+            }
+
+            if (distX > 10) {
+                enemy.worldX += ENEMY_SPEED;
+            } else if (distX < -10) {
+                enemy.worldX -= ENEMY_SPEED;
+            }
+
+            enemy.frameTimer++;
+            if (enemy.frameTimer >= ZOMBIE_ANIM_SPEED) {
+                enemy.frameIndex = (enemy.frameIndex + 1) % ZOMBIE_RUN_FRAMES;
+                enemy.frameTimer = 0;
+            }
+        } else {
+            enemy.isChasing = false;
+            enemy.frameIndex = 0;
+            enemy.frameTimer = 0;
+        }
+    }
 }
 
 function draw() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Titreme Efekti
     let shakeX = 0;
     let shakeY = 0;
     if (state.shakeTimer > 0) {
@@ -205,6 +580,8 @@ function draw() {
     ctx.save();
     ctx.translate(shakeX, shakeY);
 
+    const cameraOffsetY = -cameraY + canvas.height / 2;
+
     // 1. Arkaplanı Çiz
     if (assets.bg) {
         const bgH_original = assets.bg.height;
@@ -214,28 +591,37 @@ function draw() {
         const bgH = canvas.height;
         const bgW = bgW_original * scale;
 
+        const bgY = cameraOffsetY - canvas.height / 2;
+
         let relativeX = state.x % bgW;
         if (relativeX > 0) relativeX -= bgW;
 
         for (let i = relativeX; i < canvas.width; i += bgW) {
-            ctx.drawImage(assets.bg, i, 0, bgW, bgH);
+            ctx.drawImage(assets.bg, i, bgY, bgW, bgH);
         }
     }
 
-    // 2. Karakteri Çiz
-    const charX = canvas.width / 2;
-    const charY = (canvas.height / 2 + 210) + state.y;
+    // 2. Düşmanları Çiz
+    drawEnemies(cameraOffsetY);
+
+    // 3. Karakteri Çiz
+    const charScreenX = canvas.width / 2;
+    const charScreenY = (GROUND_OFFSET + state.y) - cameraY + canvas.height / 2;
 
     ctx.save();
-    ctx.translate(charX, charY);
+
+    // Hasar bağışıklığında yanıp sönme
+    if (playerHitCooldown > 0) {
+        ctx.globalAlpha = (Math.floor(frameCount / 4) % 2 === 0) ? 1.0 : 0.3;
+    }
+
+    ctx.translate(charScreenX, charScreenY);
 
     if (!state.facingRight) {
         ctx.scale(-1, 1);
     }
 
-    // Hangi görsel?
     let currentImg = assets.idle;
-
     let drawX = 0;
     let drawY = 0;
 
@@ -255,7 +641,6 @@ function draw() {
 
     if (currentImg) {
         if (state.isRunning && !state.isAttacking && !state.isJumping) {
-            // Spritesheet çizimi (ölçekli)
             const frameW = currentImg.width / RUN_FRAMES;
             const frameH = currentImg.height;
             const scaledW = frameW * CHARACTER_SCALE;
@@ -269,20 +654,15 @@ function draw() {
                 drawX, drawY, scaledW, scaledH
             );
 
-            // Koşarken kafayı da çiz
             if (assets.head) {
                 const pulseScale = (Math.floor(Date.now() / 380) % 2 === 0) ? 1.01 : 0.98;
-
                 const headW = scaledW * pulseScale;
                 const headH = scaledH * pulseScale;
-
                 const headX = drawX + (scaledW - headW) / 2;
                 const headY = drawY + (scaledH - headH) / 2;
-
                 ctx.drawImage(assets.head, headX, headY, headW, headH);
             }
         } else {
-            // Tek resim çizimi (idle, attack, jump) - ölçekli
             const scaledW = currentImg.width * CHARACTER_SCALE;
             const scaledH = currentImg.height * CHARACTER_SCALE;
             drawX = -scaledW / 2;
@@ -291,8 +671,233 @@ function draw() {
         }
     }
 
-    ctx.restore();
-    ctx.restore();
+    ctx.restore(); // Karakter transform
+
+    // 4. Oyuncu Can Barı ve Stamina Barı
+    drawPlayerHealthBar();
+    drawPlayerStaminaBar();
+
+    ctx.restore(); // Shake transform
+}
+
+function drawEnemies(cameraOffsetY) {
+    for (const enemy of enemies) {
+        if (enemy.isDead) continue;
+
+        const enemyScreenX = enemy.worldX + state.x + canvas.width / 2;
+
+        if (enemyScreenX < -300 || enemyScreenX > canvas.width + 300) continue;
+
+        const enemyScreenY = (GROUND_OFFSET + enemy.worldY) - cameraY + canvas.height / 2 + 20;
+
+        ctx.save();
+
+        // Ölüm animasyonu: sarsılma + fadeout
+        if (enemy.isDying) {
+            const progress = 1 - (enemy.deathTimer / DEATH_DURATION);
+            const alpha = 1 - progress;
+            ctx.globalAlpha = alpha;
+            const shakeAmt = (1 - progress) * 8;
+            const sx = (Math.random() - 0.5) * shakeAmt;
+            const sy = (Math.random() - 0.5) * shakeAmt;
+            ctx.translate(enemyScreenX + sx, enemyScreenY + sy);
+        } else if (enemy.isStunned) {
+            const sx = (Math.random() - 0.5) * 6;
+            const sy = (Math.random() - 0.5) * 3;
+            ctx.translate(enemyScreenX + sx, enemyScreenY + sy);
+        } else {
+            ctx.translate(enemyScreenX, enemyScreenY);
+        }
+
+        if (!enemy.facingRight) {
+            ctx.scale(-1, 1);
+        }
+
+        // Görsel seçimi
+        if (enemy.isAttacking) {
+            // Saldırı görselleri
+            let img;
+            if (enemy.attackStage === 1) {
+                img = assets.zombieAttack1;
+            } else {
+                img = assets.zombieAttack2;
+            }
+            if (img) {
+                const scaledW = img.width * ENEMY_SCALE;
+                const scaledH = img.height * ENEMY_SCALE;
+                ctx.drawImage(img, -scaledW / 2, -scaledH / 2, scaledW, scaledH);
+            }
+        } else if ((enemy.isChasing || enemy.isStunned) && assets.zombieRun) {
+            const img = assets.zombieRun;
+            const frameW = img.width / ZOMBIE_RUN_FRAMES;
+            const frameH = img.height;
+            const scaledW = frameW * ENEMY_SCALE;
+            const scaledH = frameH * ENEMY_SCALE;
+
+            ctx.drawImage(
+                img,
+                enemy.frameIndex * frameW, 0, frameW, frameH,
+                -scaledW / 2, -scaledH / 2, scaledW, scaledH
+            );
+        } else if (assets.zombieIdle) {
+            const img = assets.zombieIdle;
+            const scaledW = img.width * ENEMY_SCALE;
+            const scaledH = img.height * ENEMY_SCALE;
+
+            ctx.drawImage(img, -scaledW / 2, -scaledH / 2, scaledW, scaledH);
+        }
+
+        ctx.restore();
+
+        // Düşman Can Barı
+        if (!enemy.isDying) {
+            drawEnemyHealthBar(enemyScreenX, enemyScreenY, enemy.hp);
+        }
+    }
+}
+
+function drawEnemyHealthBar(screenX, screenY, hp) {
+    const barWidth = 60;
+    const barHeight = 8;
+    const barY = screenY - 130;
+    const barX = screenX - barWidth / 2;
+
+    ctx.fillStyle = 'rgba(40, 0, 0, 0.8)';
+    ctx.fillRect(barX - 1, barY - 1, barWidth + 2, barHeight + 2);
+
+    const hpRatio = hp / ENEMY_MAX_HP;
+
+    let barColor;
+    if (hpRatio > 0.6) {
+        barColor = '#00ff44';
+    } else if (hpRatio > 0.3) {
+        barColor = '#ffaa00';
+    } else {
+        barColor = '#ff2222';
+    }
+
+    ctx.fillStyle = barColor;
+    ctx.fillRect(barX, barY, barWidth * hpRatio, barHeight);
+
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.4)';
+    ctx.lineWidth = 1;
+    for (let i = 1; i < ENEMY_MAX_HP; i++) {
+        const lx = barX + (barWidth / ENEMY_MAX_HP) * i;
+        ctx.beginPath();
+        ctx.moveTo(lx, barY);
+        ctx.lineTo(lx, barY + barHeight);
+        ctx.stroke();
+    }
+
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(barX - 1, barY - 1, barWidth + 2, barHeight + 2);
+}
+
+function drawPlayerHealthBar() {
+    const barWidth = 200;
+    const barHeight = 16;
+    const barX = canvas.width / 2 - barWidth / 2;
+    const barY = 30;
+
+    // Arka plan
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+    const radius = 4;
+    ctx.beginPath();
+    ctx.roundRect(barX - 2, barY - 2, barWidth + 4, barHeight + 4, radius);
+    ctx.fill();
+
+    // Can doluluk oranı
+    const hpRatio = playerHP / PLAYER_MAX_HP;
+
+    // Gradient renk
+    const gradient = ctx.createLinearGradient(barX, barY, barX + barWidth * hpRatio, barY);
+    if (hpRatio > 0.5) {
+        gradient.addColorStop(0, '#00cc44');
+        gradient.addColorStop(1, '#00ff66');
+    } else if (hpRatio > 0.25) {
+        gradient.addColorStop(0, '#cc8800');
+        gradient.addColorStop(1, '#ffaa00');
+    } else {
+        gradient.addColorStop(0, '#cc0000');
+        gradient.addColorStop(1, '#ff2222');
+    }
+
+    ctx.fillStyle = gradient;
+    ctx.beginPath();
+    ctx.roundRect(barX, barY, barWidth * hpRatio, barHeight, radius - 1);
+    ctx.fill();
+
+    // Bölüm çizgileri (7 bölüm)
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.3)';
+    ctx.lineWidth = 1;
+    for (let i = 1; i < PLAYER_MAX_HP; i++) {
+        const lx = barX + (barWidth / PLAYER_MAX_HP) * i;
+        ctx.beginPath();
+        ctx.moveTo(lx, barY);
+        ctx.lineTo(lx, barY + barHeight);
+        ctx.stroke();
+    }
+
+    // Parlak kenarlık
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(barX - 2, barY - 2, barWidth + 4, barHeight + 4, radius);
+    ctx.stroke();
+
+    // HP yazısı
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 12px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText(`${playerHP} / ${PLAYER_MAX_HP}`, canvas.width / 2, barY + barHeight - 3);
+}
+
+function drawPlayerStaminaBar() {
+    const barWidth = 160;
+    const barHeight = 10;
+    const barX = canvas.width / 2 - barWidth / 2;
+    const barY = 54; // HP barının hemen altında
+    const radius = 3;
+
+    // Arka plan
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+    ctx.beginPath();
+    ctx.roundRect(barX - 2, barY - 1, barWidth + 4, barHeight + 2, radius);
+    ctx.fill();
+
+    // Stamina doluluk oranı
+    const stRatio = playerStamina / PLAYER_MAX_STAMINA;
+
+    // Cyan-mavi gradient
+    const gradient = ctx.createLinearGradient(barX, barY, barX + barWidth * stRatio, barY);
+    gradient.addColorStop(0, '#0088cc');
+    gradient.addColorStop(1, '#00ccff');
+
+    ctx.fillStyle = gradient;
+    if (stRatio > 0) {
+        ctx.beginPath();
+        ctx.roundRect(barX, barY, barWidth * stRatio, barHeight, radius - 1);
+        ctx.fill();
+    }
+
+    // Bölüm çizgileri
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.3)';
+    ctx.lineWidth = 1;
+    for (let i = 1; i < PLAYER_MAX_STAMINA; i++) {
+        const lx = barX + (barWidth / PLAYER_MAX_STAMINA) * i;
+        ctx.beginPath();
+        ctx.moveTo(lx, barY);
+        ctx.lineTo(lx, barY + barHeight);
+        ctx.stroke();
+    }
+
+    // Kenarlık
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(barX - 2, barY - 1, barWidth + 4, barHeight + 2, radius);
+    ctx.stroke();
 }
 
 function loop() {
@@ -301,7 +906,7 @@ function loop() {
     requestAnimationFrame(loop);
 }
 
-// Başlat
 loadImages(() => {
+    spawnEnemies();
     loop();
 });
