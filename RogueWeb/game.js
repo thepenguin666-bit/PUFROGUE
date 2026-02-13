@@ -522,6 +522,19 @@ window.addEventListener('keyup', (e) => {
 function update() {
     frameCount++;
 
+    // GAME OVER KONTROLÜ
+    if (playerHP <= 0) {
+        state.gameStarted = false;
+        const startScreen = document.getElementById('startScreen');
+        if (startScreen) {
+            startScreen.style.display = 'flex';
+            startScreen.querySelector('h1').innerText = 'GAME OVER';
+            startScreen.querySelector('h1').style.color = 'red';
+            startScreen.querySelector('#startBtn').innerText = 'TEKRAR DENE';
+        }
+        return; // Update durur
+    }
+
     // Oyuncu hasar bağışıklık sayacı
     if (playerHitCooldown > 0) playerHitCooldown--;
     if (dashCooldownTimer > 0) dashCooldownTimer--;
@@ -1468,7 +1481,33 @@ function startGame() {
     const startScreen = document.getElementById('startScreen');
     if (startScreen) {
         startScreen.style.display = 'none';
+        // Reset Ekranı -> Başlangıç Ekranı metnine dönüş
+        startScreen.querySelector('h1').innerText = 'PUFROGUE';
+        startScreen.querySelector('#startBtn').innerText = 'OYUNA BAŞLA';
     }
+
+    // RESET GAME STATE
+    state.x = 0;
+    state.y = 0;
+    state.vy = 0;
+    state.isJumping = false;
+    state.onPlatform = false;
+    state.currentGround = 0;
+    state.score = 0;
+    playerHP = PLAYER_MAX_HP;
+    playerStamina = PLAYER_MAX_STAMINA;
+    cameraY = GROUND_OFFSET_BASE;
+
+    enemies.length = 0;
+    plants.length = 0;
+    plantProjectiles.length = 0;
+    dashParticles.length = 0;
+
+    furthestSpawnedLeft = -1000;
+    furthestSpawnedRight = 1000;
+
+    spawnEnemies(); // İlk düşmanları tekrar oluştur
+
     // Müzik başlatılabilir vs.
     requestAnimationFrame(loop);
 }
