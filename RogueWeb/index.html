@@ -8,9 +8,24 @@
   <link rel="stylesheet" href="style.css">
 </head>
 
-<body>
-  <canvas id="gameCanvas"></canvas>
-  <script src="game.js"></script>
+<div id="startScreen">
+  <div class="content">
+    <h1>PUFROGUE</h1>
+    <div class="controls">
+      <p><strong>HAREKET:</strong> OK TUŞLARI</p>
+      <p><strong>ZIPLAMA:</strong> YUKARI OK (Çift Zıplama Var)</p>
+      <p><strong>SALDIRI:</strong> A TUŞU</p>
+      <p><strong>BEAM SALDIRISI:</strong> Q TUŞU (Stamina Harcar)</p>
+      <p><strong>DASH:</strong> BOŞLUK (Stamina Harcar)</p>
+      <hr>
+      <p><strong>SKOR:</strong> Zombi 200p / Bitki 150p</p>
+      <p><strong>Can ve Stamina:</strong> Karakterin üzerindeki barlardan takip edin.</p>
+    </div>
+    <button id="startBtn">OYUNA BAŞLA</button>
+  </div>
+</div>
+<canvas id="gameCanvas"></canvas>
+<script src="game.js"></script>
 </body>
 
 </html>

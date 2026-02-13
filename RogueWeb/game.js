@@ -1,20 +1,16 @@
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
-// 16:9 Sabit Oran Koruması
-// Mevcut ekran yüksekliğini referans alarak 16:9 bir alan oluşturuyoruz
-// Böylece mevcut dikey ayarlar (zemin, zıplama vs) bozulmaz
-const REF_DPR = window.devicePixelRatio || 1;
-const TARGET_HEIGHT = window.screen.height; // Referans yükseklik
-const TARGET_WIDTH = Math.round(TARGET_HEIGHT * 16 / 9); // 16:9 oranına göre genişlik
+// 16:9 Sabit Dahili Çözünürlük (Full HD)
+// Her cihazda aynı oyun alanını ve ölçeği garanti eder
+const TARGET_WIDTH = 1920;
+const TARGET_HEIGHT = 1080;
 
-// Dahili çözünürlük sabit (yüksek kalite için dpr ile çarpılabilir ama şimdilik screen resolution yeterli)
-// Performans için dpr'yi burada kullanmayıp CSS ile halledebiliriz, ama keskinlik için:
-canvas.width = Math.round(TARGET_WIDTH * REF_DPR);
-canvas.height = Math.round(TARGET_HEIGHT * REF_DPR);
+canvas.width = TARGET_WIDTH;
+canvas.height = TARGET_HEIGHT;
 
-// Referans değerimiz artık bu sabit yükseklik
-const REF_HEIGHT = canvas.height;
+// Referans ölçek yüksekliği
+const REF_HEIGHT = TARGET_HEIGHT;
 
 function updateCanvasStyle() {
     // Canvas'ı ekrana sığdır (Letterbox / Contain)
@@ -60,7 +56,10 @@ const imageSources = {
     zombieRun: 'assets/zombie_run.png',
     zombieAttack1: 'assets/zombie_attack1.png',
     zombieAttack2: 'assets/zombie_attack2.png',
-    plant: 'assets/plant.png'
+    plant: 'assets/plant.png',
+    beam1: 'assets/b1.png',
+    beam2: 'assets/b2.png',
+    beam3: 'assets/b3.png'
 };
 
 let imagesLoaded = 0;
@@ -96,7 +95,17 @@ const state = {
     jumpCount: 0,
     currentGround: 0,
     onPlatform: false,
+    onPlatform: false,
     lastHitFrame: -1,
+    // Beam Attack
+    isBeamAttacking: false,
+    beamStage: 0,
+    beamStage: 0,
+    beamStage: 0,
+    beamTimer: 0,
+    beamAttackId: 0, // Her beam saldırısı için unique ID
+    score: 0, // Skor sistemi
+    gameStarted: false, // Oyun başladı mı?
     // Dash sistemi
     isDashing: false,
     dashTimer: 0,
@@ -188,7 +197,7 @@ const ENEMY_SCALE = 0.5;
 const ENEMY_SPEED = 3;
 const ZOMBIE_RUN_FRAMES = 4;
 const ZOMBIE_ANIM_SPEED = 8;
-const ENEMY_DETECT_RANGE = 600;
+const ENEMY_DETECT_RANGE = 1000;
 const ENEMY_COUNT = 8;
 
 // Savaş Ayarları
@@ -208,7 +217,7 @@ const ZOMBIE_ATTACK_COOLDOWN = 50;
 const PLANT_SCALE = 0.45;
 const PLANT_HP = 2;
 const PLANT_COUNT = 4; // Başlangıçta spawn
-const PLANT_FIRE_RATE = 40; // Her 40 frame'de ateş = 2 saniyede 3
+const PLANT_FIRE_RATE = 60; // Saniyede 1 mermi (60 frame)
 const PLANT_PROJECTILE_SPEED = 6;
 const PLANT_PROJECTILE_SIZE = 20;
 const PLANT_DETECT_RANGE = 1200;
@@ -245,7 +254,9 @@ function createEnemy(worldX, worldY) {
         attackStage: 0, // 0: yok, 1: attack1, 2: attack2
         attackTimer: 0,
         attackCooldown: 0,
-        hasDealtDamage: false // Bu saldırı döngüsünde hasar verdi mi
+        attackCooldown: 0,
+        hasDealtDamage: false, // Bu saldırı döngüsünde hasar verdi mi
+        lastHitBeamId: -1 // En son hangi beam saldırısından hasar aldı
     });
 }
 
@@ -324,7 +335,9 @@ function createPlant(worldX, worldY) {
         lastHitStage: -1,
         isStunned: false,
         stunTimer: 0,
-        facingRight: Math.random() > 0.5
+        stunTimer: 0,
+        facingRight: Math.random() > 0.5,
+        lastHitBeamId: -1 // En son hangi beam saldırısından hasar aldı
     });
 }
 
@@ -351,6 +364,7 @@ function updatePlants() {
                     plant.isStunned = true;
                     plant.stunTimer = STUN_DURATION;
                     if (plant.hp <= 0) {
+                        if (!plant.isDying) state.score += 150; // Plant skoru
                         plant.isDying = true;
                         plant.deathTimer = DEATH_DURATION;
                         plant.hp = 0;
@@ -444,7 +458,18 @@ const keys = {};
 window.addEventListener('keydown', (e) => {
     keys[e.key.toLowerCase()] = true;
 
-    if (e.key === 'ArrowUp' && !state.isAttacking) {
+    // Q Tuşu: Beam Attack
+    const beamCost = Math.floor(PLAYER_MAX_STAMINA * 0.3);
+    if (e.key.toLowerCase() === 'q' && !state.isAttacking && !state.isBeamAttacking && !state.isDashing && playerStamina >= beamCost) {
+        state.isBeamAttacking = true;
+        state.beamStage = 1; // 1: b1, 2: b2, 3: b3
+        state.beamTimer = 0;
+        state.beamAttackId++; // Yeni saldırı ID'si
+        state.isRunning = false;
+        playerStamina -= beamCost;
+    }
+
+    if (e.key === 'ArrowUp' && !state.isAttacking && !state.isBeamAttacking) {
         if (!state.isJumping && !state.onPlatform) {
             state.isJumping = true;
             state.vy = JUMP_POWER;
@@ -615,6 +640,46 @@ function update() {
     }
 
     // === Yerdeki / Platformdaki Mantık ===
+
+    // Beam Attack Logic
+    if (state.isBeamAttacking) {
+        state.beamTimer++;
+
+        // 1.4x Hızlandırılmış Animasyon (Toplam ~39 frame)
+        // 0-8 frames: b1
+        // 8-17 frames: b2
+        // 17-39 frames: b3 (Beam Active)
+
+        if (state.beamTimer < 8) {
+            state.beamStage = 1;
+        } else if (state.beamTimer < 17) {
+            state.beamStage = 2;
+        } else {
+            state.beamStage = 3;
+            // Beam hasar ve efekt zamanı
+            // Ekran titretme (sadece başlangıçta)
+            if (state.beamTimer === 17) state.shakeTimer = 10;
+
+            // Alan Hasarı
+            checkBeamHit();
+        }
+
+        if (state.beamTimer >= 39) {
+            state.isBeamAttacking = false;
+            state.beamStage = 0;
+            state.beamTimer = 0;
+            state.shakeTimer = 0; // Garanti olsun
+        }
+
+        // Beam sırasında hareket yok
+        const targetCameraY = getGroundOffset() + state.y;
+        cameraY += (targetCameraY - cameraY) * 0.12;
+        dynamicSpawn();
+        updateEnemies();
+        updatePlants();
+        return;
+    }
+
     if (keys['a']) {
         if (!state.isAttacking && playerStamina > 0) {
             state.isAttacking = true;
@@ -628,9 +693,10 @@ function update() {
 
             if (state.attackTimer > ATTACK_DELAY - 5 && state.attackTimer < ATTACK_DELAY) {
                 state.shakeTimer = SHAKE_INTENSITY;
-            } else {
-                state.shakeTimer = 0;
             }
+            // Shake timer update içinde global azaltılmalı, burada değil.
+            // Fakat mevcut kod yapısında update() başında azaltılmıyor, o yüzden buraya ekliyoruz:
+            if (state.shakeTimer > 0) state.shakeTimer--;
 
             if (state.attackTimer >= ATTACK_DELAY) {
                 state.attackTimer = 0;
@@ -684,6 +750,92 @@ function update() {
     dynamicSpawn();
     updateEnemies();
     updatePlants();
+    resolveCharacterCollisions();
+}
+
+function checkBeamHit() {
+    const playerWorldX = -state.x;
+    const isFacingRight = state.facingRight;
+    const BEAM_RANGE = 800; // Menzil
+    const BEAM_HEIGHT = 120;
+
+    // Zombiler için
+    for (const enemy of enemies) {
+        if (enemy.isDead || enemy.isDying) continue;
+
+        // Eğer bu düşman bu beam saldırısında zaten hasar aldıysa tekrar alma
+        if (enemy.lastHitBeamId === state.beamAttackId) continue;
+
+        const distX = enemy.worldX - playerWorldX;
+        const distY = Math.abs(enemy.worldY - state.y);
+
+        // Yön kontrolü
+        const isEnemyRight = distX > 0;
+        if ((isFacingRight && !isEnemyRight) || (!isFacingRight && isEnemyRight)) continue;
+
+        // Menzil kontrolü
+        if (Math.abs(distX) < BEAM_RANGE && distY < BEAM_HEIGHT) {
+            enemy.hp -= 1; // Beam hasarı 1'e düşürüldü
+            enemy.isStunned = true;
+            enemy.stunTimer = STUN_DURATION + 10;
+            enemy.lastHitStage = 'beam';
+            enemy.lastHitBeamId = state.beamAttackId; // Bu beam ID'sini kaydet
+
+            // Geri tepme
+            const knockDir = isEnemyRight ? 1 : -1;
+            enemy.worldX += knockDir * KNOCKBACK_DIST * 2;
+
+            if (enemy.hp <= 0) {
+                if (!enemy.isDying) state.score += 200; // Zombi skoru
+                enemy.isDying = true;
+                enemy.deathTimer = DEATH_DURATION;
+                enemy.hp = 0;
+            }
+        }
+    }
+
+    // Plantler için
+    for (const plant of plants) {
+        if (plant.isDead || plant.isDying) continue;
+
+        // Eğer bu plant bu beam saldırısında zaten hasar aldıysa tekrar alma
+        if (plant.lastHitBeamId === state.beamAttackId) continue;
+
+        const distX = plant.worldX - playerWorldX;
+        const distY = Math.abs(plant.worldY - state.y);
+
+        const isPlantRight = distX > 0;
+        if ((isFacingRight && !isPlantRight) || (!isFacingRight && isPlantRight)) continue;
+
+        if (Math.abs(distX) < BEAM_RANGE && distY < BEAM_HEIGHT) {
+            plant.hp -= 1;
+            plant.isStunned = true;
+            plant.stunTimer = STUN_DURATION + 10;
+            plant.lastHitStage = 'beam';
+            plant.lastHitBeamId = state.beamAttackId; // Bu beam ID'sini kaydet
+
+            if (plant.hp <= 0) {
+                if (!plant.isDying) state.score += 150; // Plant skoru
+                plant.isDying = true;
+                plant.deathTimer = DEATH_DURATION;
+                plant.hp = 0;
+            }
+        }
+    }
+
+    // Mermileri yok et
+    for (let i = plantProjectiles.length - 1; i >= 0; i--) {
+        const proj = plantProjectiles[i];
+        const dx = proj.worldX - playerWorldX;
+        const dy = Math.abs(proj.worldY - state.y);
+
+        const isProjRight = dx > 0;
+        if ((isFacingRight && !isProjRight) || (!isFacingRight && isProjRight)) continue;
+
+        if (Math.abs(dx) < BEAM_RANGE && dy < BEAM_HEIGHT) {
+            plantProjectiles.splice(i, 1);
+        }
+    }
 }
 
 function checkAttackHit() {
@@ -718,6 +870,7 @@ function checkAttackHit() {
                 enemy.worldX += knockDir * KNOCKBACK_DIST;
 
                 if (enemy.hp <= 0) {
+                    if (!enemy.isDying) state.score += 200; // Zombi skoru
                     enemy.isDying = true;
                     enemy.deathTimer = DEATH_DURATION;
                     enemy.hp = 0;
@@ -961,6 +1114,69 @@ function draw() {
         } else {
             currentImg = assets.jump;
         }
+    } else if (state.isBeamAttacking) {
+        if (state.beamStage === 1) currentImg = assets.beam1;
+        else if (state.beamStage === 2) currentImg = assets.beam2;
+        else if (state.beamStage === 3) {
+            currentImg = assets.beam3;
+            // Beam Efekti Çizimi - Karakterin önüne doğru, "Wave" şeklinde ilerleyen soft ışık
+            ctx.save();
+
+            // Beam İlerleme Durumu (Progressive Extension)
+            // 22 frame sürüyor (17 -> 39). Hızla uzasın (ilk 10 frame'de full)
+            const beamDuration = 39 - 17;
+            const progress = Math.min(1, (state.beamTimer - 17) / 10);
+
+            const maxBeamLength = 1000;
+            const currentBeamLength = maxBeamLength * progress;
+            const beamHeight = 200; // Geniş, soft alan
+
+            // Mirroring zaten ctx.scale(-1, 1) ile hallediliyor. Her zaman sağa (pozitif X).
+            const startX = 40;
+            const endX = 40 + currentBeamLength;
+            const midY = -30; // 30px aşağı indirildi (göğüs hizasından biraz aşağı)
+
+            // Additive Blending (Işık parlaması için)
+            ctx.globalCompositeOperation = 'screen';
+
+            // YENİ YÖNTEM: Stretched Radial Gradients (Tamamen yumuşak kenarlar)
+            // Çizgi veya dikdörtgen yerine basık elipsler çiziyoruz.
+            // Bu sayede hem yatay hem dikey fade out doğal oluyor.
+
+            const drawEllipticalBeam = (length, height, colorInner, colorOuter) => {
+                ctx.save();
+                // Aslında en kolayı: Beam'in MERKEZİNE translate edip çizmek.
+
+                const centerX = startX + length / 2;
+                const centerY = midY;
+
+                ctx.translate(centerX, centerY);
+                ctx.scale(length / 2, height / 2); // Yarıçap scale
+
+                const rGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, 1);
+                rGrad.addColorStop(0, colorInner);
+                rGrad.addColorStop(0.4, colorInner); // Keskinlik için: merkez rengi biraz devam etsin
+                rGrad.addColorStop(0.8, colorOuter); // Kenara doğru renk değişimi
+                rGrad.addColorStop(1, 'rgba(0,0,0,0)');
+
+                ctx.fillStyle = rGrad;
+                ctx.beginPath();
+                ctx.arc(0, 0, 1, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            };
+
+            // 1. Dış Haze (Mavi) - Daha kalın
+            drawEllipticalBeam(currentBeamLength * 1.2, 260, 'rgba(0, 100, 255, 0.4)', 'rgba(0, 50, 200, 0)');
+
+            // 2. Orta Enerji (Cyan) - Daha belirgin
+            drawEllipticalBeam(currentBeamLength * 1.0, 140, 'rgba(0, 255, 255, 0.7)', 'rgba(0, 200, 255, 0)');
+
+            // 3. İç Çekirdek (Beyaz) - Daha keskin
+            drawEllipticalBeam(currentBeamLength * 0.9, 55, 'rgba(255, 255, 255, 1.0)', 'rgba(255, 255, 255, 0)');
+
+            ctx.restore();
+        }
     } else if (state.isAttacking) {
         if (state.attackStage === 1) currentImg = assets.attack1;
         else if (state.attackStage === 2) currentImg = assets.attack2;
@@ -1008,9 +1224,10 @@ function draw() {
 
     ctx.restore(); // Karakter transform
 
-    // 4. Oyuncu Can Barı ve Stamina Barı
-    drawPlayerHealthBar();
-    drawPlayerStaminaBar();
+    // 4. UI (Skor ve Karakter Barları)
+    drawScore();
+    drawFloatingPlayerBars(); // Floating bars (HP + Stamina)
+
 
     ctx.restore(); // Shake transform
 }
@@ -1122,111 +1339,7 @@ function drawEnemyHealthBar(screenX, screenY, hp) {
     ctx.strokeRect(barX - 1, barY - 1, barWidth + 2, barHeight + 2);
 }
 
-function drawPlayerHealthBar() {
-    const barWidth = 200;
-    const barHeight = 16;
-    const barX = canvas.width / 2 - barWidth / 2;
-    const barY = 30;
 
-    // Arka plan
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
-    const radius = 4;
-    ctx.beginPath();
-    ctx.roundRect(barX - 2, barY - 2, barWidth + 4, barHeight + 4, radius);
-    ctx.fill();
-
-    // Can doluluk oranı
-    const hpRatio = playerHP / PLAYER_MAX_HP;
-
-    // Gradient renk
-    const gradient = ctx.createLinearGradient(barX, barY, barX + barWidth * hpRatio, barY);
-    if (hpRatio > 0.5) {
-        gradient.addColorStop(0, '#00cc44');
-        gradient.addColorStop(1, '#00ff66');
-    } else if (hpRatio > 0.25) {
-        gradient.addColorStop(0, '#cc8800');
-        gradient.addColorStop(1, '#ffaa00');
-    } else {
-        gradient.addColorStop(0, '#cc0000');
-        gradient.addColorStop(1, '#ff2222');
-    }
-
-    ctx.fillStyle = gradient;
-    ctx.beginPath();
-    ctx.roundRect(barX, barY, barWidth * hpRatio, barHeight, radius - 1);
-    ctx.fill();
-
-    // Bölüm çizgileri (7 bölüm)
-    ctx.strokeStyle = 'rgba(0, 0, 0, 0.3)';
-    ctx.lineWidth = 1;
-    for (let i = 1; i < PLAYER_MAX_HP; i++) {
-        const lx = barX + (barWidth / PLAYER_MAX_HP) * i;
-        ctx.beginPath();
-        ctx.moveTo(lx, barY);
-        ctx.lineTo(lx, barY + barHeight);
-        ctx.stroke();
-    }
-
-    // Parlak kenarlık
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.roundRect(barX - 2, barY - 2, barWidth + 4, barHeight + 4, radius);
-    ctx.stroke();
-
-    // HP yazısı
-    ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 12px Arial';
-    ctx.textAlign = 'center';
-    ctx.fillText(`${playerHP} / ${PLAYER_MAX_HP}`, canvas.width / 2, barY + barHeight - 3);
-}
-
-function drawPlayerStaminaBar() {
-    const barWidth = 160;
-    const barHeight = 10;
-    const barX = canvas.width / 2 - barWidth / 2;
-    const barY = 54; // HP barının hemen altında
-    const radius = 3;
-
-    // Arka plan
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-    ctx.beginPath();
-    ctx.roundRect(barX - 2, barY - 1, barWidth + 4, barHeight + 2, radius);
-    ctx.fill();
-
-    // Stamina doluluk oranı
-    const stRatio = playerStamina / PLAYER_MAX_STAMINA;
-
-    // Cyan-mavi gradient
-    const gradient = ctx.createLinearGradient(barX, barY, barX + barWidth * stRatio, barY);
-    gradient.addColorStop(0, '#0088cc');
-    gradient.addColorStop(1, '#00ccff');
-
-    ctx.fillStyle = gradient;
-    if (stRatio > 0) {
-        ctx.beginPath();
-        ctx.roundRect(barX, barY, barWidth * stRatio, barHeight, radius - 1);
-        ctx.fill();
-    }
-
-    // Bölüm çizgileri
-    ctx.strokeStyle = 'rgba(0, 0, 0, 0.3)';
-    ctx.lineWidth = 1;
-    for (let i = 1; i < PLAYER_MAX_STAMINA; i++) {
-        const lx = barX + (barWidth / PLAYER_MAX_STAMINA) * i;
-        ctx.beginPath();
-        ctx.moveTo(lx, barY);
-        ctx.lineTo(lx, barY + barHeight);
-        ctx.stroke();
-    }
-
-    // Kenarlık
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.roundRect(barX - 2, barY - 1, barWidth + 4, barHeight + 2, radius);
-    ctx.stroke();
-}
 
 function drawPlants(cameraOffsetY) {
     for (const plant of plants) {
@@ -1332,7 +1445,9 @@ function loop(timestamp) {
     lastTime = timestamp;
 
     // Delta time'ı sınırla (max 100ms) - Eğer tab inaktif kalırsa veya lag olursa oyun kilitlenmesin
-    accumulator += Math.min(deltaTime, 100);
+    // OYUN HIZI: 1.3x (Zamanı 1.3 kat hızlı akıtıyoruz)
+    const GAME_SPEED = 1.3;
+    accumulator += Math.min(deltaTime, 100) * GAME_SPEED;
 
     // Eğer frame drop olursa birden fazla update çalıştırıp yakala
     // Sonsuz döngü koruması için while yerine max adım sınırı da koyabiliriz ama genelde gerekmez
@@ -1342,10 +1457,172 @@ function loop(timestamp) {
     }
 
     draw();
+    if (state.gameStarted) {
+        requestAnimationFrame(loop);
+    }
+}
+
+// Oyun Başlatma Mantığı
+function startGame() {
+    state.gameStarted = true;
+    const startScreen = document.getElementById('startScreen');
+    if (startScreen) {
+        startScreen.style.display = 'none';
+    }
+    // Müzik başlatılabilir vs.
     requestAnimationFrame(loop);
 }
 
+document.getElementById('startBtn').addEventListener('click', startGame);
+
 loadImages(() => {
     spawnEnemies();
-    requestAnimationFrame(loop);
+    // Oyun hemen başlamaz, butona basılınca başlar
 });
+
+function resolveCharacterCollisions() {
+    const playerWorldX = -state.x;
+    const playerWidth = 60; // Hitbox genişliği
+    const enemyWidth = 60;
+    const MIN_DIST = (playerWidth + enemyWidth) / 2;
+
+    // 1. Player vs Enemies
+    for (const enemy of enemies) {
+        if (enemy.isDead || enemy.isDying) continue;
+
+        // Eğer farklı kattalarsa çarpışma
+        const distY = Math.abs(enemy.worldY - state.y);
+        if (distY > 50) continue;
+
+        // X ekseni farkı
+        const dx = enemy.worldX - playerWorldX;
+        const dist = Math.abs(dx);
+
+        if (dist < MIN_DIST) {
+            const overlap = MIN_DIST - dist;
+            // İtme yönü: dx pozitifse (düşman sağda), düşmanı sağa it, oyuncuyu sola it
+            const pushDir = dx > 0 ? 1 : -1;
+
+            // Player'ın ağırlığı daha fazla olsun, düşman daha çok itilsin
+            // Ama basitlik için eşit dağıtalım veya oyuncuyu hareket ettirelim
+            // state.x (kamera/oyuncu konumu) ters işliyor: state.x artarsa dünya sola kayar (oyuncu sağa gider)
+            // state.x -= push demek -> worldX += push demek (oyuncu sağa itilir)
+            // Biz oyuncuyu geriye (sola) itmek istiyoruz -> worldX -= push -> state.x += push
+
+            // Eğer düşman sağdaysa (dx > 0) -> Oyuncu sola itilmeli (worldX azalmalı -> state.x artmalı)
+            // Düşman sağa itilmeli (worldX artmalı)
+
+            const pushAmount = overlap * 0.5;
+
+            // Düşmanı it
+            enemy.worldX += pushDir * pushAmount;
+
+            // Oyuncuyu it
+            // state.x = -playerWorldX
+            // playerWorldX -= pushDir * pushAmount
+            // -state.x -= pushDir * pushAmount
+            // state.x += pushDir * pushAmount
+            state.x += pushDir * pushAmount;
+        }
+    }
+
+    // 2. Enemy vs Enemy (Birbirinin içinden geçmesinler)
+    for (let i = 0; i < enemies.length; i++) {
+        for (let j = i + 1; j < enemies.length; j++) {
+            const e1 = enemies[i];
+            const e2 = enemies[j];
+
+            if (e1.isDead || e1.isDying || e2.isDead || e2.isDying) continue;
+
+            // Aynı kat kontrolü
+            if (Math.abs(e1.worldY - e2.worldY) > 50) continue;
+
+            const dx = e2.worldX - e1.worldX;
+            const dist = Math.abs(dx);
+            const MIN_ENEMY_DIST = 50; // Düşmanlar arası mesafe
+
+            if (dist < MIN_ENEMY_DIST) {
+                const overlap = MIN_ENEMY_DIST - dist;
+                const pushDir = dx > 0 ? 1 : -1; // e2, e1'in sağındaysa sağa itilsin
+
+                const push1 = overlap * 0.5;
+
+                e2.worldX += pushDir * push1;
+                e1.worldX -= pushDir * push1;
+            }
+        }
+    }
+}
+
+function drawScore() {
+    ctx.save();
+    ctx.font = 'bold 36px "Courier New", monospace';
+    ctx.fillStyle = '#FFD700'; // Gold renk
+    ctx.textAlign = 'left';
+    ctx.shadowColor = 'black';
+    ctx.shadowBlur = 4;
+    ctx.lineWidth = 2;
+    ctx.strokeText(`SKOR: ${state.score}`, 40, 60);
+    ctx.fillText(`SKOR: ${state.score}`, 40, 60);
+    ctx.restore();
+}
+
+function drawFloatingPlayerBars() {
+    // Oyuncu karakterinin ekran koordinatları
+    // state.x: Dünya koordinatının tersi (kamera ofseti gibi)
+    // Oyuncu her zaman ekranın ortasında (canvas.width / 2)
+    // Y ekseni: (getGroundOffset() + state.y) - cameraY + canvas.height / 2
+
+    const screenX = canvas.width / 2;
+    const screenY = (getGroundOffset() + state.y) - cameraY + canvas.height / 2;
+
+    // Bar Ayarları
+    const barWidth = 80; // Karakter genişliği kadar
+    const barHeight = 6;
+    const spacing = 4;
+
+    // Konum: Karakterin üstü (kafası) -> yaklaşık 100-120px yukarı
+    const startY = screenY - 130;
+
+    // 1. HP BAR (Üstte)
+    const hpX = screenX - barWidth / 2;
+    const hpY = startY;
+
+    // Arkaplan
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+    ctx.fillRect(hpX - 1, hpY - 1, barWidth + 2, barHeight + 2);
+
+    // Doluluk
+    const hpRatio = Math.max(0, playerHP / PLAYER_MAX_HP);
+
+    // HP Renk
+    if (hpRatio > 0.5) ctx.fillStyle = '#00cc44';
+    else if (hpRatio > 0.25) ctx.fillStyle = '#ffaa00';
+    else ctx.fillStyle = '#cc0000';
+
+    ctx.fillRect(hpX, hpY, barWidth * hpRatio, barHeight);
+
+    // Çerçeve/Border
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(hpX - 1, hpY - 1, barWidth + 2, barHeight + 2);
+
+    // 2. STAMINA BAR (Altta, HP barının hemen altında)
+    const stX = screenX - barWidth / 2;
+    const stY = hpY + barHeight + spacing;
+
+    // Arkaplan
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+    ctx.fillRect(stX - 1, stY - 1, barWidth + 2, barHeight + 2);
+
+    // Doluluk
+    const stRatio = Math.max(0, playerStamina / PLAYER_MAX_STAMINA);
+
+    // Stamina Renk (Mavi/Cyan)
+    ctx.fillStyle = '#00bbff';
+    ctx.fillRect(stX, stY, barWidth * stRatio, barHeight);
+
+    // Çerçeve
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+    ctx.strokeRect(stX - 1, stY - 1, barWidth + 2, barHeight + 2);
+}

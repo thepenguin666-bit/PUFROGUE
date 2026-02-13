@@ -2,17 +2,81 @@
 body {
     margin: 0;
     padding: 0;
-    overflow: hidden;
     /* Scrollbar'ları gizle */
+    overflow: hidden;
     background-color: #000;
     /* Kenarlarda boşluk kalırsa siyah olsun */
-    display: flex;
-    justify-content: center;
-    align-items: center;
     height: 100vh;
+    font-family: 'Courier New', monospace;
 }
 
 canvas {
     display: block;
     object-fit: fill;
+}
+
+#startScreen {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.9);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 10;
+    color: white;
+    text-align: center;
+}
+
+.content {
+    background: #222;
+    padding: 40px;
+    border: 4px solid #444;
+    border-radius: 10px;
+    max-width: 600px;
+    box-shadow: 0 0 20px rgba(0, 0, 0, 0.8);
+}
+
+.content h1 {
+    font-size: 48px;
+    margin-bottom: 20px;
+    color: #ffcc00;
+    text-shadow: 2px 2px 4px #000;
+}
+
+.controls {
+    text-align: left;
+    margin-bottom: 30px;
+    line-height: 1.6;
+    font-size: 18px;
+}
+
+.controls p {
+    margin: 10px 0;
+}
+
+.controls strong {
+    color: #00ccff;
+}
+
+#startBtn {
+    padding: 15px 40px;
+    font-size: 24px;
+    background: #00cc44;
+    color: white;
+    border: none;
+    cursor: pointer;
+    font-family: inherit;
+    font-weight: bold;
+    border-radius: 5px;
+    transition: background 0.3s;
+    text-shadow: 1px 1px 2px black;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+}
+
+#startBtn:hover {
+    background: #00ee55;
+    transform: scale(1.05);
 }
