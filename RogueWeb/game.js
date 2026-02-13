@@ -148,7 +148,7 @@ const STAMINA_REGEN_RATE = 33; // 43 / 1.3
 
 // Ayarlar (Hızlandırılmış Değerler - 1.3x)
 const SPEED = 13; // 10 * 1.3
-const ATTACK_DELAY = 14; // 18 / 1.3
+const ATTACK_DELAY = 9; // 14 / 1.5 (1.5x Hızlandırıldı)
 const SHAKE_INTENSITY = 5;
 const GRAVITY = 1.04; // 0.8 * 1.3
 const FALL_GRAVITY = 2.08; // 1.6 * 1.3
@@ -710,26 +710,26 @@ function update() {
     if (state.isBeamAttacking) {
         state.beamTimer++;
 
-        // 1.4x Hızlandırılmış Animasyon (Toplam ~39 frame)
-        // 0-8 frames: b1
-        // 8-17 frames: b2
-        // 17-39 frames: b3 (Beam Active)
+        // 1.5x Hızlandırılmış Animasyon (Toplam ~26 frame)
+        // 0-5 frames: b1
+        // 5-11 frames: b2
+        // 11-26 frames: b3 (Beam Active)
 
-        if (state.beamTimer < 8) {
+        if (state.beamTimer < 5) {
             state.beamStage = 1;
-        } else if (state.beamTimer < 17) {
+        } else if (state.beamTimer < 11) {
             state.beamStage = 2;
         } else {
             state.beamStage = 3;
             // Beam hasar ve efekt zamanı
             // Ekran titretme (sadece başlangıçta)
-            if (state.beamTimer === 17) state.shakeTimer = 10;
+            if (state.beamTimer === 11) state.shakeTimer = 10;
 
             // Alan Hasarı
             checkBeamHit();
         }
 
-        if (state.beamTimer >= 39) {
+        if (state.beamTimer >= 26) {
             state.isBeamAttacking = false;
             state.beamStage = 0;
             state.beamTimer = 0;
