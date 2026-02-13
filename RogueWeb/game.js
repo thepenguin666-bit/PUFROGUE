@@ -72,7 +72,7 @@ const PLAYER_HIT_COOLDOWN = 40;
 const PLAYER_MAX_STAMINA = 15;
 let playerStamina = PLAYER_MAX_STAMINA;
 let staminaRegenTimer = 0;
-const STAMINA_REGEN_RATE = 60; // Her 60 frame'de (1 saniye) 1 stamina
+const STAMINA_REGEN_RATE = 30; // Her 30 frame'de (0.5 saniye) 1 stamina = saniyede 2
 
 // Ayarlar
 const SPEED = 10;
@@ -767,14 +767,7 @@ function drawEnemyHealthBar(screenX, screenY, hp) {
 
     const hpRatio = hp / ENEMY_MAX_HP;
 
-    let barColor;
-    if (hpRatio > 0.6) {
-        barColor = '#00ff44';
-    } else if (hpRatio > 0.3) {
-        barColor = '#ffaa00';
-    } else {
-        barColor = '#ff2222';
-    }
+    let barColor = '#ff2222';
 
     ctx.fillStyle = barColor;
     ctx.fillRect(barX, barY, barWidth * hpRatio, barHeight);
