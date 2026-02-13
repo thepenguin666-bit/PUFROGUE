@@ -1,12 +1,20 @@
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
-canvas.width = window.innerWidth;
-canvas.height = window.innerHeight;
+// Zoom-bağımsız canvas boyutlandırma
+// devicePixelRatio ile fiziksel piksel çözünürlüğünü koruyarak
+// tarayıcı zoom'unun etkisini sıfırlıyoruz
+function updateCanvasSize() {
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.round(window.innerWidth * dpr);
+    canvas.height = Math.round(window.innerHeight * dpr);
+    canvas.style.width = window.innerWidth + 'px';
+    canvas.style.height = window.innerHeight + 'px';
+}
+updateCanvasSize();
 
 window.addEventListener('resize', () => {
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
+    updateCanvasSize();
 });
 
 // Görselleri Yükle
@@ -100,8 +108,16 @@ const GRAVITY = 0.8;
 const FALL_GRAVITY = 1.6;
 const JUMP_POWER = -25;
 const CHARACTER_SCALE = 0.5;
-const PLATFORM_Y = -350;
-const GROUND_OFFSET = 210;
+const PLATFORM_Y = -440;
+const GROUND_OFFSET_BASE = 540;
+
+// Ölçek yardımcı fonksiyonları - arka plan ölçeğiyle orantılı zemin hizalama
+function getScale() {
+    return assets.bg ? (canvas.height / assets.bg.height) : 1;
+}
+function getGroundOffset() {
+    return GROUND_OFFSET_BASE * getScale();
+}
 
 // Platform Boşluk Bölgesi
 const PLATFORM_GAP_START = 2500;
@@ -136,7 +152,7 @@ let runFrameTimer = 0;
 const RUN_ANIM_SPEED = 5;
 
 // Kamera
-let cameraY = GROUND_OFFSET;
+let cameraY = GROUND_OFFSET_BASE;
 
 // === DÜŞMAN SİSTEMİ ===
 const ENEMY_SCALE = 0.5;
@@ -463,7 +479,7 @@ function update() {
 
         // Rüzgar partikülleri oluştur
         const charScreenX = canvas.width / 2;
-        const charScreenY = (GROUND_OFFSET + state.y) - cameraY + canvas.height / 2;
+        const charScreenY = (getGroundOffset() + state.y) - cameraY + canvas.height / 2;
         for (let p = 0; p < 3; p++) {
             dashParticles.push({
                 x: charScreenX + (-state.dashDirection) * (20 + Math.random() * 30),
@@ -483,7 +499,7 @@ function update() {
                 state.vy = state.preDashVy > 0 ? state.preDashVy : 2;
             }
         }
-        const targetCameraY = GROUND_OFFSET + state.y;
+        const targetCameraY = getGroundOffset() + state.y;
         cameraY += (targetCameraY - cameraY) * 0.12;
         dynamicSpawn();
         updateEnemies();
@@ -528,7 +544,7 @@ function update() {
                 state.onPlatform = true;
                 state.currentGround = PLATFORM_Y;
 
-                const targetCameraY = GROUND_OFFSET + state.y;
+                const targetCameraY = getGroundOffset() + state.y;
                 cameraY += (targetCameraY - cameraY) * 0.12;
                 dynamicSpawn();
                 updateEnemies();
@@ -560,7 +576,7 @@ function update() {
             state.facingRight = false;
         }
 
-        const targetCameraY = GROUND_OFFSET + state.y;
+        const targetCameraY = getGroundOffset() + state.y;
         cameraY += (targetCameraY - cameraY) * 0.12;
 
         dynamicSpawn();
@@ -633,7 +649,7 @@ function update() {
         }
     }
 
-    const targetCameraY = GROUND_OFFSET + state.y;
+    const targetCameraY = getGroundOffset() + state.y;
     cameraY += (targetCameraY - cameraY) * 0.12;
 
     dynamicSpawn();
@@ -873,7 +889,7 @@ function draw() {
 
     // 3. Karakteri Çiz
     const charScreenX = canvas.width / 2;
-    const charScreenY = (GROUND_OFFSET + state.y) - cameraY + canvas.height / 2;
+    const charScreenY = (getGroundOffset() + state.y) - cameraY + canvas.height / 2;
 
     ctx.save();
 
@@ -960,7 +976,7 @@ function drawEnemies(cameraOffsetY) {
 
         if (enemyScreenX < -300 || enemyScreenX > canvas.width + 300) continue;
 
-        const enemyScreenY = (GROUND_OFFSET + enemy.worldY) - cameraY + canvas.height / 2 + 20;
+        const enemyScreenY = (getGroundOffset() + enemy.worldY) - cameraY + canvas.height / 2 + 20;
 
         ctx.save();
 
@@ -1172,7 +1188,7 @@ function drawPlants(cameraOffsetY) {
         const screenX = plant.worldX + state.x + canvas.width / 2;
         if (screenX < -300 || screenX > canvas.width + 300) continue;
 
-        const screenY = (GROUND_OFFSET + plant.worldY) - cameraY + canvas.height / 2 + 20;
+        const screenY = (getGroundOffset() + plant.worldY) - cameraY + canvas.height / 2 + 20;
 
         ctx.save();
 
@@ -1235,7 +1251,7 @@ function drawPlants(cameraOffsetY) {
 function drawPlantProjectiles(cameraOffsetY) {
     for (const proj of plantProjectiles) {
         const screenX = proj.worldX + state.x + canvas.width / 2;
-        const screenY = (GROUND_OFFSET + proj.worldY) - cameraY + canvas.height / 2 + 20;
+        const screenY = (getGroundOffset() + proj.worldY) - cameraY + canvas.height / 2 + 20;
 
         if (screenX < -50 || screenX > canvas.width + 50) continue;
 
