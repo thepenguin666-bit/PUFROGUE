@@ -1,13 +1,17 @@
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
-// Zoom-bağımsız canvas boyutlandırma
-// devicePixelRatio ile fiziksel piksel çözünürlüğünü koruyarak
-// tarayıcı zoom'unun etkisini sıfırlıyoruz
+// Sabit ölçek, viewport kırpma yaklaşımı:
+// Canvas viewport boyutuna uyar (dpr ile keskin render)
+// Pencere küçüldüğünde içerik aynı boyutta kalır, sadece daha az alan görünür
+const REF_DPR = window.devicePixelRatio || 1;
+const REF_HEIGHT = Math.round(window.screen.height * REF_DPR);
+
 function updateCanvasSize() {
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width = Math.round(window.innerWidth * dpr);
-    canvas.height = Math.round(window.innerHeight * dpr);
+    const currentDPR = window.devicePixelRatio || 1;
+    // dpr ile çarparak zoom'u nötralize ediyoruz
+    canvas.width = Math.round(window.innerWidth * currentDPR);
+    canvas.height = Math.round(window.innerHeight * currentDPR);
     canvas.style.width = window.innerWidth + 'px';
     canvas.style.height = window.innerHeight + 'px';
 }
@@ -106,28 +110,29 @@ const ATTACK_DELAY = 18;
 const SHAKE_INTENSITY = 5;
 const GRAVITY = 0.8;
 const FALL_GRAVITY = 1.6;
-const JUMP_POWER = -25;
+const JUMP_POWER = -29;
 const CHARACTER_SCALE = 0.5;
-const PLATFORM_Y = -440;
-const GROUND_OFFSET_BASE = 540;
+const PLATFORM_Y = -545;
+const GROUND_OFFSET_BASE = 590;
 
-// Ölçek yardımcı fonksiyonları - arka plan ölçeğiyle orantılı zemin hizalama
+// Ölçek yardımcı fonksiyonları - SABİT referans yüksekliğe göre
+// Pencere boyutu değişse de ölçek değişmez, sadece görünen alan değişir
 function getScale() {
-    return assets.bg ? (canvas.height / assets.bg.height) : 1;
+    return (assets.bg && assets.bg.height > 0) ? (REF_HEIGHT / assets.bg.height) : 1;
 }
 function getGroundOffset() {
     return GROUND_OFFSET_BASE * getScale();
 }
 
 // Platform Boşluk Bölgesi
-const PLATFORM_GAP_START = 2500;
-const PLATFORM_GAP_END = 6400;
+const PLATFORM_GAP_START = 4360;
+const PLATFORM_GAP_END = 8260;
 
 function isPlatformAvailable() {
     if (!assets.bg) return true;
     const bgW_original = assets.bg.width;
     let worldX = -state.x;
-    const scale = canvas.height / assets.bg.height;
+    const scale = getScale();
     let bgX = worldX / scale;
     bgX = bgX % bgW_original;
     if (bgX < 0) bgX += bgW_original;
@@ -138,7 +143,7 @@ function isPlatformAvailable() {
 function isPlatformAtWorldX(enemyWorldX) {
     if (!assets.bg) return true;
     const bgW_original = assets.bg.width;
-    const scale = canvas.height / assets.bg.height;
+    const scale = getScale();
     let bgX = enemyWorldX / scale;
     bgX = bgX % bgW_original;
     if (bgX < 0) bgX += bgW_original;
@@ -841,17 +846,35 @@ function draw() {
         const bgH_original = assets.bg.height;
         const bgW_original = assets.bg.width;
 
-        const scale = canvas.height / bgH_original;
-        const bgH = canvas.height;
+        const scale = getScale();
+        const bgH = bgH_original * scale;
         const bgW = bgW_original * scale;
 
-        const bgY = cameraOffsetY - canvas.height / 2;
+        // Arka plan sabit ölçekte çizilir, canvas dışına taşan kısım kırpılır
+        const bgY = cameraOffsetY - bgH / 2;
 
-        let relativeX = state.x % bgW;
-        if (relativeX > 0) relativeX -= bgW;
+        // Arka planın orijinini ekranın ortasına hizala (karakterin olduğu yer)
+        // Böylece pencere genişliği değişse de hizalama bozulmaz
+        const midScreenX = canvas.width / 2;
 
-        for (let i = relativeX; i < canvas.width; i += bgW) {
-            ctx.drawImage(assets.bg, i, bgY, bgW, bgH);
+        // state.x: dünya ofseti (sağa gidince artar, sola gidince azalır)
+        // Ekranın ortasındaki dünya koordinatı: -state.x
+        // Biz arka planı -state.x dünya koordinatı ekranın ortasına gelecek şekilde çizmeliyiz.
+        // Yani, bg görselinin (0,0) noktası, ekranın (midScreenX + state.x, bgY) noktasında olmalı.
+
+        if (bgW > 0) {
+            let startX = (midScreenX + state.x) % bgW;
+            if (startX > 0) startX -= bgW;
+
+            // Sonsuz döngü koruması: bgW çok küçükse çizme
+            if (bgW < 5) return;
+
+            for (let i = startX; i < canvas.width; i += bgW) {
+                // Sadece ekran içinde kalanları çiz (performans optimizasyonu)
+                if (i + bgW > 0) {
+                    ctx.drawImage(assets.bg, i, bgY, bgW, bgH);
+                }
+            }
         }
     }
 
