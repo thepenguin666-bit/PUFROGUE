@@ -1018,6 +1018,9 @@ function checkBeamHit() {
         // Eğer bu düşman bu beam saldırısında zaten hasar aldıysa tekrar alma
         if (enemy.lastHitBeamId === state.beamAttackId) continue;
 
+        // Frog Invincibility (Jump/Fall)
+        if (enemy.type === 'frog' && (enemy.isJumping || enemy.isFalling)) continue;
+
         const distX = enemy.worldX - playerWorldX;
         const distY = Math.abs(enemy.worldY - state.y);
 
@@ -1104,6 +1107,9 @@ function checkAttackHit() {
         if (isGroundAttack && enemy.lastHitStage === state.attackStage) continue;
         if (isAirAttack && enemy.lastHitStage === 'air') continue;
 
+        // Frog Invincibility (Jump/Fall)
+        if (enemy.type === 'frog' && (enemy.isJumping || enemy.isFalling)) continue;
+
         const distX = enemy.worldX - playerWorldX;
         const absDist = Math.abs(distX);
 
@@ -1137,6 +1143,30 @@ function updateEnemies() {
 
     const playerWorldX = -state.x;
     const playerWorldY = state.y;
+
+    // Düşman Ayrıştırma (Separation)
+    for (let i = 0; i < enemies.length; i++) {
+        const e1 = enemies[i];
+        if (e1.isDead) continue;
+        for (let j = i + 1; j < enemies.length; j++) {
+            const e2 = enemies[j];
+            if (e2.isDead) continue;
+
+            const dx = e1.worldX - e2.worldX;
+            const dist = Math.abs(dx);
+            const MIM_SEPARATION = 60; // Düşmanlar arası minimum mesafe
+
+            // Eğer çok yakınlarsa ve aynı yükseklikteyelerse (kısmen)
+            if (dist < MIM_SEPARATION && Math.abs(e1.worldY - e2.worldY) < 50) {
+                const push = (MIM_SEPARATION - dist) / 2; // Her birini yarısı kadar it
+                // Eğer tam üst üstelerse rastgele it
+                const dir = dist === 0 ? (Math.random() > 0.5 ? 1 : -1) : (dx > 0 ? 1 : -1);
+
+                e1.worldX += dir * push * 0.1; // Hafif itme (titremeyi önlemek için yumuşak)
+                e2.worldX -= dir * push * 0.1;
+            }
+        }
+    }
 
     for (let i = enemies.length - 1; i >= 0; i--) {
         const enemy = enemies[i];
@@ -1690,6 +1720,11 @@ function drawEnemies(cameraOffsetY) {
                 }
             }
             ctx.restore();
+
+            // Frog Health Bar (Explicit call before continue)
+            if (!enemy.isDying) {
+                drawEnemyHealthBar(enemyScreenX, enemyScreenY, enemy.hp, enemy.maxHp || ENEMY_MAX_HP, 150);
+            }
             continue;
         }
 
@@ -1731,8 +1766,8 @@ function drawEnemies(cameraOffsetY) {
 
         // Düşman Can Barı
         if (!enemy.isDying) {
-            // Frog için offset 60 (yere daha yakın), Zombie için 130
-            const barOffset = enemy.type === 'frog' ? 60 : 130;
+            // Frog görseli yüksek olduğu için offset artırıldı (60 -> 150)
+            const barOffset = enemy.type === 'frog' ? 150 : 130;
             drawEnemyHealthBar(enemyScreenX, enemyScreenY, enemy.hp, enemy.maxHp || ENEMY_MAX_HP, barOffset);
         }
     }
