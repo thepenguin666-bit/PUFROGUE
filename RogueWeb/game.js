@@ -1216,7 +1216,9 @@ function updateEnemies() {
                     enemy.landingTimer = 20; // 20 frame boyunca iniş (Attack) görseli
 
                     // İniş sırasında hasar verme (Stomp/Attack etkisi)
-                    if (Math.abs(player.worldX - enemy.worldX) < FROG_ATTACK_RANGE && Math.abs(player.worldY - enemy.worldY) < 50) {
+                    // Hata düzeltildi: player objesi burada yok, world koordinatları karşılaştırılmalı
+                    // distX ve distY zaten yukarıda hesaplanmış durumda
+                    if (Math.abs(distX) < FROG_ATTACK_RANGE && distY < 50) {
                         if (playerHitCooldown <= 0) {
                             playerHP -= FROG_DAMAGE;
                             playerHitCooldown = PLAYER_HIT_COOLDOWN;
