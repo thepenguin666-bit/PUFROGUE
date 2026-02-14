@@ -59,7 +59,11 @@ const imageSources = {
     plant: 'assets/plant.png',
     beam1: 'assets/b1.png',
     beam2: 'assets/b2.png',
-    beam3: 'assets/b3.png'
+    beam3: 'assets/b3.png',
+    beam4: 'assets/b4.png',
+    beam5: 'assets/b5.png',
+    beam6: 'assets/b6.png',
+    beam7: 'assets/b7.png'
 };
 
 let imagesLoaded = 0;
@@ -95,22 +99,15 @@ const state = {
     jumpCount: 0,
     currentGround: 0,
     onPlatform: false,
-    onPlatform: false,
-    onPlatform: false,
-    onPlatform: false,
     lastHitFrame: -1,
-    // İnterpolasyon için önceki frame değerleri
-    prevX: 0,
-    prevY: 0,
     // İnterpolasyon için önceki frame değerleri
     prevX: 0,
     prevY: 0,
     // Beam Attack
     isBeamAttacking: false,
     beamStage: 0,
-    beamStage: 0,
-    beamStage: 0,
     beamTimer: 0,
+    beamChargeTimer: 0, // Şarj süresi
     beamAttackId: 0, // Her beam saldırısı için unique ID
     score: 0, // Skor sistemi
     gameStarted: false, // Oyun başladı mı?
@@ -133,6 +130,7 @@ let spaceWasReleased = true;
 
 // Dash rüzgar partikülleri
 const dashParticles = [];
+const chargingParticles = []; // Beam şarj partikülleri
 
 // Oyuncu Can Sistemi
 const PLAYER_MAX_HP = 7;
@@ -144,7 +142,7 @@ const PLAYER_HIT_COOLDOWN = 30; // 40 / 1.3
 const PLAYER_MAX_STAMINA = 15;
 let playerStamina = PLAYER_MAX_STAMINA;
 let staminaRegenTimer = 0;
-const STAMINA_REGEN_RATE = 33; // 43 / 1.3
+const STAMINA_REGEN_RATE = 16; // Hız 2 katına çıkarıldı (33 -> 16)
 
 // Ayarlar (Hızlandırılmış Değerler - 1.3x)
 const SPEED = 13; // 10 * 1.3
@@ -235,6 +233,7 @@ const PLANT_DETECT_RANGE = 1200;
 
 const plants = [];
 const plantProjectiles = [];
+const beamProjectiles = []; // Oyuncunun beam mermileri
 
 let frameCount = 0;
 const ENEMY_SPAWN_AHEAD = 2000;
@@ -529,6 +528,12 @@ function update() {
 
     frameCount++;
 
+    // Mermi güncellemeleri (Karakter durumundan bağımsız)
+    updateBeamProjectiles();
+
+    // Ekran sarsıntısı sönümleme (Global)
+    if (state.shakeTimer > 0) state.shakeTimer--;
+
     // GAME OVER KONTROLÜ
     if (playerHP <= 0) {
         state.gameStarted = false;
@@ -581,8 +586,8 @@ function update() {
         return;
     }
 
-    // Stamina yenilenmesi
-    if (playerStamina < PLAYER_MAX_STAMINA) {
+    // Stamina yenilenmesi (Beam saldırısı sırasında durur)
+    if (playerStamina < PLAYER_MAX_STAMINA && !state.isBeamAttacking) {
         staminaRegenTimer++;
         if (staminaRegenTimer >= STAMINA_REGEN_RATE) {
             playerStamina++;
@@ -719,21 +724,67 @@ function update() {
             state.beamStage = 1;
         } else if (state.beamTimer < 11) {
             state.beamStage = 2;
-        } else {
+        } else if (state.beamTimer < 26) {
             state.beamStage = 3;
-            // Beam hasar ve efekt zamanı
-            // Ekran titretme (sadece başlangıçta)
-            if (state.beamTimer === 11) state.shakeTimer = 10;
-
-            // Alan Hasarı
+            if (state.beamTimer >= 11 && state.beamTimer < 26) state.shakeTimer = 10;
             checkBeamHit();
+        } else {
+            // GENİŞLETİLMİŞ BEAM (Q basılı tutuluyorsa)
+            if (keys['q']) {
+                if (state.beamTimer < 46) { // 26 -> 46 (20 frames)
+                    state.beamStage = 4;
+                } else if (state.beamTimer < 66) { // 46 -> 66 (20 frames)
+                    state.beamStage = 5;
+                } else {
+                    // Stage 6'da SIKIŞ / ŞARJ OL
+                    state.beamStage = 6;
+                    state.beamChargeTimer++;
+
+                    // Görsel Efekt: Mavi partiküller biriksin
+                    const charScreenX = canvas.width / 2;
+                    const charScreenY = (getGroundOffset() + state.y) - cameraY + canvas.height / 2;
+                    if (frameCount % 3 === 0) {
+                        const angle = Math.random() * Math.PI * 2;
+                        const dist = 70 + Math.random() * 50;
+                        chargingParticles.push({
+                            x: charScreenX + Math.cos(angle) * dist,
+                            y: charScreenY + Math.sin(angle) * dist,
+                            tx: charScreenX,
+                            ty: charScreenY,
+                            life: 25,
+                            size: 4 + Math.random() * 4
+                        });
+                    }
+
+                    // Stamina Tüketimi (Daha agresif başlangıç)
+                    const chargeSec = state.beamChargeTimer / 60;
+                    const drainInterval = Math.max(2, 20 - Math.floor(chargeSec * 8)); // 40 -> 20 yapıldı, daha hızlı başlar
+                    if (frameCount % drainInterval === 0) {
+                        playerStamina -= 1;
+                    }
+
+                    // Stamina biterse otomatik sal
+                    if (playerStamina <= 0) {
+                        playerStamina = 0;
+                        fireChargedBeam();
+                    }
+                }
+            } else {
+                // Q bırakıldıysa (Stage 6'ya ulaşılmışsa ateşle, yoksa iptal/yok)
+                if (state.beamStage === 6) {
+                    fireChargedBeam();
+                } else {
+                    state.isBeamAttacking = false;
+                    state.beamStage = 0;
+                    state.beamTimer = 0;
+                    state.shakeTimer = 0;
+                    state.beamChargeTimer = 0;
+                }
+            }
         }
 
-        if (state.beamTimer >= 26) {
-            state.isBeamAttacking = false;
-            state.beamStage = 0;
-            state.beamTimer = 0;
-            state.shakeTimer = 0; // Garanti olsun
+        if (state.isBeamAttacking && state.beamTimer < 600) { // Timeout koruması (Artırıldı)
+            state.beamTimer++;
         }
 
         // Beam sırasında hareket yok
@@ -759,7 +810,6 @@ function update() {
             if (state.attackTimer > ATTACK_DELAY - 5 && state.attackTimer < ATTACK_DELAY) {
                 state.shakeTimer = SHAKE_INTENSITY;
             }
-            if (state.shakeTimer > 0) state.shakeTimer--;
 
             if (state.attackTimer >= ATTACK_DELAY) {
                 state.attackTimer = 0;
@@ -808,7 +858,123 @@ function update() {
     dynamicSpawn();
     updateEnemies();
     updatePlants();
+    updateChargingParticles(); // Şarj efektleri
+    updateBeamProjectiles(); // Yeni beam projectileları
     resolveCharacterCollisions();
+}
+
+function updateChargingParticles() {
+    const charScreenX = canvas.width / 2;
+    const charScreenY = (getGroundOffset() + state.y) - cameraY + canvas.height / 2;
+
+    for (let i = chargingParticles.length - 1; i >= 0; i--) {
+        const p = chargingParticles[i];
+        p.life--;
+        // Karakterin merkezine çekim
+        p.x += (charScreenX - p.x) * 0.15;
+        p.y += (charScreenY - p.y) * 0.15;
+
+        if (p.life <= 0) chargingParticles.splice(i, 1);
+    }
+}
+
+function fireChargedBeam() {
+    const chargeSec = state.beamChargeTimer / 60;
+    const powerBonus = Math.floor(chargeSec); // Saniye başına +1 hasar
+    const scaleBonus = 1 + chargeSec * 0.5; // Saniye başına +0.5 büyüklük
+
+    beamProjectiles.push({
+        worldX: -state.x + (state.facingRight ? 100 : -100),
+        worldY: state.y - 30, // Göğüs hizası
+        vx: state.facingRight ? 12.5 : -12.5, // Hız 0.5x
+        distance: 0,
+        maxDistance: 800, // Mesafe 2x
+        facingRight: state.facingRight,
+        hitList: [],
+        damage: 2 + Math.floor(chargeSec), // Temel 2 + her saniye +1
+        scale: scaleBonus
+    });
+
+    state.isBeamAttacking = false;
+    state.beamStage = 0;
+    state.beamTimer = 0;
+    state.beamChargeTimer = 0;
+    state.shakeTimer = 0;
+}
+
+function updateBeamProjectiles() {
+    const playerWorldX = -state.x;
+
+    for (let i = beamProjectiles.length - 1; i >= 0; i--) {
+        const proj = beamProjectiles[i];
+        proj.worldX += proj.vx;
+        proj.distance += Math.abs(proj.vx);
+
+        if (proj.distance >= proj.maxDistance) {
+            beamProjectiles.splice(i, 1);
+            continue;
+        }
+
+        // Düşman çarpışma (Zombiler)
+        for (const enemy of enemies) {
+            if (enemy.isDead || enemy.isDying) continue;
+            if (proj.hitList.includes(enemy)) continue;
+
+            const dx = Math.abs(proj.worldX - enemy.worldX);
+            const dy = Math.abs(proj.worldY - (enemy.worldY - 30)); // Gövde hizası
+
+            if (dx < 100 && dy < 80) {
+                enemy.hp -= (proj.damage || 2); // B7 mermisi hasarı (şarja göre)
+                proj.hitList.push(enemy);
+                enemy.isStunned = true;
+                enemy.stunTimer = STUN_DURATION;
+
+                if (enemy.hp <= 0) {
+                    if (!enemy.isDying) state.score += 200;
+                    enemy.isDying = true;
+                    enemy.deathTimer = DEATH_DURATION;
+                    enemy.hp = 0;
+                }
+            }
+        }
+
+        // Bitkiler için çarpışma
+        for (const plant of plants) {
+            if (plant.isDead || plant.isDying) continue;
+            if (proj.hitList.includes(plant)) continue;
+
+            const dx = Math.abs(proj.worldX - plant.worldX);
+            const dy = Math.abs(proj.worldY - (plant.worldY - 30));
+
+            if (dx < 100 && dy < 80) {
+                plant.hp -= (proj.damage || 2);
+                proj.hitList.push(plant);
+                plant.isStunned = true;
+                plant.stunTimer = STUN_DURATION;
+
+                if (plant.hp <= 0) {
+                    if (!plant.isDying) state.score += 150;
+                    plant.isDying = true;
+                    plant.deathTimer = DEATH_DURATION;
+                    plant.hp = 0;
+                }
+            }
+        }
+
+        // Bitki mermilerini yok et (Saldırı mermisi projeyi siler ama kendisi gitmez)
+        const beamW = 100 * (proj.scale || 1.0);
+        const beamH = 80 * (proj.scale || 1.0);
+
+        for (let j = plantProjectiles.length - 1; j >= 0; j--) {
+            const pproj = plantProjectiles[j];
+            const pdx = Math.abs(proj.worldX - pproj.worldX);
+            const pdy = Math.abs(proj.worldY - pproj.worldY);
+
+            if (pdx < beamW && pdy < beamH) {
+                plantProjectiles.splice(j, 1);
+            }
+        }
+    }
 }
 
 function checkBeamHit() {
@@ -1121,6 +1287,12 @@ function draw(alpha = 1.0) {
     // 2.2 Plant mermilerini çiz
     drawPlantProjectiles(cameraOffsetY);
 
+    // 2.3 Beam mermilerini çiz
+    drawBeamProjectiles(cameraOffsetY);
+
+    // 2.3.1 Şarj partiküllerini çiz
+    drawChargingParticles();
+
     // 2.5 Dash rüzgar partiküllerini çiz
     for (let i = dashParticles.length - 1; i >= 0; i--) {
         const p = dashParticles[i];
@@ -1184,7 +1356,12 @@ function draw(alpha = 1.0) {
     } else if (state.isBeamAttacking) {
         if (state.beamStage === 1) currentImg = assets.beam1;
         else if (state.beamStage === 2) currentImg = assets.beam2;
-        else if (state.beamStage === 3) {
+        else if (state.beamStage === 3) currentImg = assets.beam3;
+        else if (state.beamStage === 4) currentImg = assets.beam4;
+        else if (state.beamStage === 5) currentImg = assets.beam5;
+        else if (state.beamStage === 6) currentImg = assets.beam6;
+
+        if (state.beamStage === 3) {
             currentImg = assets.beam3;
             // Beam Efekti Çizimi - Karakterin önüne doğru, "Wave" şeklinde ilerleyen soft ışık
             ctx.save();
@@ -1502,6 +1679,74 @@ function drawPlantProjectiles(cameraOffsetY) {
     }
 }
 
+function drawBeamProjectiles(cameraOffsetY) {
+    for (const proj of beamProjectiles) {
+        const screenX = proj.worldX + state.x + canvas.width / 2;
+        const screenY = (getGroundOffset() + proj.worldY) - cameraY + canvas.height / 2;
+
+        if (screenX < -200 || screenX > canvas.width + 200) continue;
+
+        // Mesafeye göre fade out (son 100 pikselde)
+        let alpha = 1;
+        if (proj.distance > 300) {
+            alpha = 1 - (proj.distance - 300) / 100;
+        }
+
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.translate(screenX, screenY);
+        if (!proj.facingRight) ctx.scale(-1, 1);
+
+        if (assets.beam7) {
+            const img = assets.beam7;
+            const projScale = proj.scale || 1.0;
+            const scaledW = img.width * CHARACTER_SCALE * 1.5 * projScale;
+            const scaledH = img.height * CHARACTER_SCALE * 1.5 * projScale;
+
+            // Mermi Glow (Yumuşak mavi aydınlık)
+            const glowSize = scaledW * 0.8;
+            const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, glowSize);
+            grad.addColorStop(0, 'rgba(0, 255, 255, 0.4)');
+            grad.addColorStop(0.6, 'rgba(0, 100, 255, 0.1)');
+            grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+            ctx.fillStyle = grad;
+            ctx.beginPath();
+            ctx.arc(0, 0, glowSize, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.drawImage(img, -scaledW / 2, -scaledH / 2, scaledW, scaledH);
+        }
+        ctx.restore();
+    }
+}
+
+function drawChargingParticles() {
+    for (const p of chargingParticles) {
+        ctx.save();
+        const alpha = p.life / 25;
+        ctx.globalAlpha = alpha;
+
+        // Parçacık Glow
+        const glowRad = (p.size || 5) * 3;
+        const grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, glowRad);
+        grad.addColorStop(0, 'rgba(0, 255, 255, 0.6)');
+        grad.addColorStop(0.5, 'rgba(0, 150, 255, 0.2)');
+        grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, glowRad, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Parçacık Çekirdek
+        ctx.fillStyle = '#ccffff';
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size / 2 || 2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+    }
+}
+
 let lastTime = 0;
 const FIXED_STEP = 1000 / 60; // 60 FPS saniye başına güncelleme (yaklaşık 16.67ms)
 let accumulator = 0;
@@ -1561,11 +1806,13 @@ function startGame() {
     // Reset interpolation vars
     state.prevX = 0;
     state.prevY = 0;
+    state.beamChargeTimer = 0; // Şarjı sıfırla
     prevCameraY = GROUND_OFFSET_BASE;
 
     enemies.length = 0;
     plants.length = 0;
     plantProjectiles.length = 0;
+    beamProjectiles.length = 0;
     dashParticles.length = 0;
 
     furthestSpawnedLeft = -1000;
