@@ -80,3 +80,39 @@ canvas {
     background: #00ee55;
     transform: scale(1.05);
 }
+
+/* Audio Controls */
+#audioControls {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 100;
+}
+
+#muteBtn {
+    background: rgba(0, 0, 0, 0.5);
+    border: 2px solid white;
+    border-radius: 50%;
+    width: 60px;
+    height: 60px;
+    cursor: pointer;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    transition: background 0.3s, transform 0.2s;
+    outline: none;
+}
+
+#muteBtn:hover {
+    background: rgba(255, 255, 255, 0.2);
+    transform: scale(1.1);
+}
+
+#muteBtn:active {
+    transform: scale(0.9);
+}
+
+#speakerIcon {
+    width: 32px;
+    height: 32px;
+}

@@ -1820,7 +1820,12 @@ function startGame() {
 
     spawnEnemies(); // İlk düşmanları tekrar oluştur
 
-    // Müzik başlatılabilir vs.
+    // Müzik başlat
+    const bgMusic = document.getElementById('bgMusic');
+    if (bgMusic) {
+        bgMusic.play().catch(e => console.log("Müzik başlatılamadı:", e));
+    }
+
     requestAnimationFrame(loop);
 }
 
@@ -1830,6 +1835,33 @@ loadImages(() => {
     spawnEnemies();
     // Oyun hemen başlamaz, butona basılınca başlar
 });
+
+// Ses Kontrolü
+const muteBtn = document.getElementById('muteBtn');
+const bgMusic = document.getElementById('bgMusic');
+const speakerIcon = document.getElementById('speakerIcon');
+
+if (muteBtn && bgMusic) {
+    muteBtn.addEventListener('click', () => {
+        bgMusic.muted = !bgMusic.muted;
+
+        if (bgMusic.muted) {
+            // Mute Icon
+            speakerIcon.innerHTML = `
+                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                <line x1="23" y1="9" x2="17" y2="15"></line>
+                <line x1="17" y1="9" x2="23" y2="15"></line>
+            `;
+        } else {
+            // Unmute Icon
+            speakerIcon.innerHTML = `
+                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                <path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path>
+                <path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+            `;
+        }
+    });
+}
 
 function resolveCharacterCollisions() {
     const playerWorldX = -state.x;
