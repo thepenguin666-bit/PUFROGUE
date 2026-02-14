@@ -63,7 +63,12 @@ const imageSources = {
     beam4: 'assets/b4.png',
     beam5: 'assets/b5.png',
     beam6: 'assets/b6.png',
-    beam7: 'assets/b7.png'
+    beam7: 'assets/b7.png',
+    frog_idle: 'assets/frog_idle.png',
+    frog_jump1: 'assets/frog_jump1.png',
+    frog_jump2: 'assets/frog_jump2.png',
+    frog_run: 'assets/frog_run.png',
+    frog_attack: 'assets/frog_attack.png'
 };
 
 let imagesLoaded = 0;
@@ -240,17 +245,33 @@ const ENEMY_SPAWN_AHEAD = 2000;
 let furthestSpawnedRight = 5000;
 let furthestSpawnedLeft = -3000;
 
+// FROG AYARLARI
+const FROG_DETECTION_RANGE = 700;
+const FROG_ATTACK_RANGE = 220; // 120 + 100 (Daha uzaktan saldırı)
+const FROG_JUMP_POWER = -9;
+const FROG_GRAVITY = 0.3;
+const FROG_HORIZ_SPEED = 7;
+const FROG_RUN_SPEED = 11; // Daha da hızlı koşsun (7 -> 11)
+const FROG_RUN_FRAMES = 6;
+const FROG_ANIM_SPEED = 5;
+const FROG_ATTACK_COOLDOWN = 60; // 1 saniye
+const FROG_DAMAGE = 2;
+const FROG_MAX_HP = 7; // Yeni can değeri
+
 const enemies = [];
 
-function createEnemy(worldX, worldY) {
+function createEnemy(worldX, worldY, type = 'zombie') {
+    const maxHp = type === 'frog' ? FROG_MAX_HP : ENEMY_MAX_HP;
     enemies.push({
+        type: type, // 'zombie' veya 'frog'
         worldX: worldX,
         worldY: worldY,
         facingRight: Math.random() > 0.5,
         isChasing: false,
         frameIndex: 0,
         frameTimer: 0,
-        hp: ENEMY_MAX_HP,
+        hp: maxHp,
+        maxHp: maxHp, // Can barı çizimi için
         stunTimer: 0,
         isStunned: false,
         isDying: false,
@@ -266,7 +287,11 @@ function createEnemy(worldX, worldY) {
         attackCooldown: 0,
         attackCooldown: 0,
         hasDealtDamage: false, // Bu saldırı döngüsünde hasar verdi mi
-        lastHitBeamId: -1 // En son hangi beam saldırısından hasar aldı
+        lastHitBeamId: -1, // En son hangi beam saldırısından hasar aldı
+        jumpVx: 0, // Frog için dinamik zıplama hızı
+        hasJumped: false, // Sadece 1 kere zıplamalı
+        jumpPrepTimer: 0, // Zıplama öncesi hazırlık
+        landingTimer: 0 // Yere iniş animasyonu
     });
 }
 
@@ -280,7 +305,8 @@ function spawnEnemies() {
             worldY = PLATFORM_Y;
         }
 
-        createEnemy(worldX, worldY);
+        const type = Math.random() < 0.3 ? 'frog' : 'zombie'; // %30 kurbağa ihtimali
+        createEnemy(worldX, worldY, type);
     }
 
     // Plant düşmanları
@@ -303,7 +329,8 @@ function dynamicSpawn() {
         for (let i = 0; i < count; i++) {
             const spawnX = furthestSpawnedRight + 300 + Math.random() * 800;
             const worldY = Math.random() < 0.35 ? PLATFORM_Y : 0;
-            createEnemy(spawnX, worldY);
+            const type = Math.random() < 0.3 ? 'frog' : 'zombie';
+            createEnemy(spawnX, worldY, type);
         }
         // Dinamik plant spawn (sağ)
         if (Math.random() < 0.5) {
@@ -319,7 +346,8 @@ function dynamicSpawn() {
         for (let i = 0; i < count; i++) {
             const spawnX = furthestSpawnedLeft - 300 - Math.random() * 800;
             const worldY = Math.random() < 0.35 ? PLATFORM_Y : 0;
-            createEnemy(spawnX, worldY);
+            const type = Math.random() < 0.3 ? 'frog' : 'zombie';
+            createEnemy(spawnX, worldY, type);
         }
         // Dinamik plant spawn
         if (Math.random() < 0.5) {
@@ -1162,7 +1190,116 @@ function updateEnemies() {
         const distY = Math.abs(playerWorldY - enemy.worldY);
         const absDist = Math.abs(distX);
 
-        // Düşman saldırı durumunda
+        // Kurbağa (Frog) Mantığı
+        if (enemy.type === 'frog') {
+            // Frog Düşüş/Sıçrama Fiziği
+            if (enemy.isJumping || enemy.isFalling) {
+                if (enemy.vy < 0) enemy.vy += FROG_GRAVITY;
+                else enemy.vy += FROG_GRAVITY;
+
+                enemy.worldY += enemy.vy;
+                enemy.worldY += enemy.vy;
+
+                // Dinamik hız varsa onu kullan, yoksa sabit hız (eski mantık kalırsa diye)
+                const speed = enemy.jumpVx !== undefined ? enemy.jumpVx : (FROG_HORIZ_SPEED * (enemy.facingRight ? 1 : -1));
+                enemy.worldX += speed;
+
+                // Yere iniş kontrolü
+
+                // Yere iniş kontrolü
+                const targetGround = (enemy.worldY <= PLATFORM_Y + 50 && isPlatformAtWorldX(enemy.worldX)) ? PLATFORM_Y : 0;
+                if (enemy.vy > 0 && enemy.worldY >= targetGround) {
+                    enemy.worldY = targetGround;
+                    enemy.vy = 0;
+                    enemy.isJumping = false;
+                    enemy.isFalling = false;
+                    enemy.landingTimer = 20; // 20 frame boyunca iniş (Attack) görseli
+
+                    // İniş sırasında hasar verme (Stomp/Attack etkisi)
+                    if (Math.abs(player.worldX - enemy.worldX) < FROG_ATTACK_RANGE && Math.abs(player.worldY - enemy.worldY) < 50) {
+                        if (playerHitCooldown <= 0) {
+                            playerHP -= FROG_DAMAGE;
+                            playerHitCooldown = PLAYER_HIT_COOLDOWN;
+                            state.shakeTimer = 15; // Güçlü iniş sarsıntısı
+                        }
+                    }
+                }
+                continue;
+            }
+
+            // İniş Animasyonu (Jump1)
+            if (enemy.landingTimer > 0) {
+                enemy.landingTimer--;
+                continue; // Hareket etme
+            }
+
+            // Frog Saldırı Durumu
+            if (enemy.isAttacking) {
+                enemy.attackTimer++;
+                // Hasar Kontrolü (Attack karesinde)
+                if (!enemy.hasDealtDamage && enemy.attackTimer > 5 && distY < 100 && absDist < FROG_ATTACK_RANGE) {
+                    if (playerHitCooldown <= 0) {
+                        playerHP -= FROG_DAMAGE;
+                        playerHitCooldown = PLAYER_HIT_COOLDOWN;
+                        enemy.hasDealtDamage = true;
+                        if (playerHP < 0) playerHP = 0;
+                        state.shakeTimer = 15; // Darbe sarsıntısı
+                    }
+                }
+                if (enemy.attackTimer >= 25) { // Saldırı süresi
+                    enemy.isAttacking = false;
+                    enemy.attackTimer = 0;
+                    enemy.attackCooldown = FROG_ATTACK_COOLDOWN;
+                    enemy.hasDealtDamage = false;
+                }
+                continue;
+            }
+
+            // Frog Karar Verme (Idle/Detect) -> Hazırlık Başlat
+            if (!enemy.hasJumped && absDist < FROG_DETECTION_RANGE && distY < 200) {
+                enemy.facingRight = distX > 0;
+
+                // Zıplama Hazırlığı (Prep)
+                if (enemy.jumpPrepTimer > 0) {
+                    enemy.jumpPrepTimer++;
+                    if (enemy.jumpPrepTimer > 20) { // 20 frame hazırlık
+                        // FIRLA!
+                        enemy.isJumping = true;
+                        enemy.vy = FROG_JUMP_POWER;
+                        // Hedefe 60 frame'de varacak şekilde hız ayarla
+                        enemy.jumpVx = distX / 60;
+                        enemy.hasJumped = true;
+                        enemy.jumpPrepTimer = 0;
+                    }
+                    continue;
+                } else {
+                    enemy.jumpPrepTimer = 1; // Hazırlığı başlat
+                }
+            } else if (enemy.hasJumped) {
+                // Yürüme Modu (Zıpladıktan sonra)
+                enemy.facingRight = distX > 0;
+                if (absDist < FROG_ATTACK_RANGE && distY < 100 && enemy.attackCooldown <= 0) {
+                    enemy.isAttacking = true;
+                    enemy.attackTimer = 0;
+                    enemy.hasDealtDamage = false;
+                } else {
+                    // Yürü (Kovalama)
+                    if (absDist > 10) {
+                        enemy.worldX += FROG_RUN_SPEED * (enemy.facingRight ? 1 : -1);
+
+                        // Koşma Animasyonu
+                        enemy.frameTimer++;
+                        if (enemy.frameTimer >= FROG_ANIM_SPEED) {
+                            enemy.frameIndex = (enemy.frameIndex + 1) % FROG_RUN_FRAMES;
+                            enemy.frameTimer = 0;
+                        }
+                    }
+                }
+            }
+            continue;
+        }
+
+        // Düşman saldırı durumunda (Zombie)
         if (enemy.isAttacking) {
             enemy.attackTimer++;
 
@@ -1509,7 +1646,52 @@ function drawEnemies(cameraOffsetY) {
             ctx.scale(-1, 1);
         }
 
-        // Görsel seçimi
+        // --- FROG RENDER ---
+        if (enemy.type === 'frog') {
+            let img = assets.frog_run; // Varsayılan: Run (Sheet)
+
+            if (enemy.isAttacking) {
+                img = assets.frog_attack;
+            } else if (enemy.isJumping || enemy.isFalling) {
+                // Havadayken jump2
+                img = assets.frog_jump2;
+            } else if (enemy.landingTimer > 0) {
+                // İnişte attack görseli (Kullanıcı isteği: düşüşte hasar/saldırı hissi)
+                img = assets.frog_attack;
+            } else if (enemy.jumpPrepTimer > 0) {
+                // Hazırlıkta jump1
+                img = assets.frog_jump1;
+            } else if (!enemy.hasJumped) {
+                // Henüz zıplamamışsa Idle
+                img = assets.frog_idle;
+            }
+
+            if (img) {
+                const scaledW = img.width * ENEMY_SCALE;
+                const scaledH = img.height * ENEMY_SCALE;
+                const offsetY = -45; // Zemin düzeltmesi
+
+                if (img === assets.frog_run) {
+                    // Spritesheet çizimi
+                    const frameW = img.width / FROG_RUN_FRAMES;
+                    const frameH = img.height;
+                    const runScaledW = frameW * ENEMY_SCALE;
+
+                    ctx.drawImage(
+                        img,
+                        enemy.frameIndex * frameW, 0, frameW, frameH,
+                        -runScaledW / 2, -scaledH / 2 + offsetY, runScaledW, scaledH
+                    );
+                } else {
+                    // Tekli görsel çizimi
+                    ctx.drawImage(img, -scaledW / 2, -scaledH / 2 + offsetY, scaledW, scaledH);
+                }
+            }
+            ctx.restore();
+            continue;
+        }
+
+        // --- ZOMBIE RENDER ---
         if (enemy.isAttacking) {
             // Saldırı görselleri
             let img;
@@ -1547,21 +1729,23 @@ function drawEnemies(cameraOffsetY) {
 
         // Düşman Can Barı
         if (!enemy.isDying) {
-            drawEnemyHealthBar(enemyScreenX, enemyScreenY, enemy.hp);
+            // Frog için offset 60 (yere daha yakın), Zombie için 130
+            const barOffset = enemy.type === 'frog' ? 60 : 130;
+            drawEnemyHealthBar(enemyScreenX, enemyScreenY, enemy.hp, enemy.maxHp || ENEMY_MAX_HP, barOffset);
         }
     }
 }
 
-function drawEnemyHealthBar(screenX, screenY, hp) {
+function drawEnemyHealthBar(screenX, screenY, hp, maxHp, yOffset = 130) {
     const barWidth = 60;
     const barHeight = 8;
-    const barY = screenY - 130;
+    const barY = screenY - yOffset;
     const barX = screenX - barWidth / 2;
 
     ctx.fillStyle = 'rgba(40, 0, 0, 0.8)';
     ctx.fillRect(barX - 1, barY - 1, barWidth + 2, barHeight + 2);
 
-    const hpRatio = hp / ENEMY_MAX_HP;
+    const hpRatio = hp / maxHp;
 
     let barColor = '#ff2222';
 
@@ -1570,8 +1754,8 @@ function drawEnemyHealthBar(screenX, screenY, hp) {
 
     ctx.strokeStyle = 'rgba(0, 0, 0, 0.4)';
     ctx.lineWidth = 1;
-    for (let i = 1; i < ENEMY_MAX_HP; i++) {
-        const lx = barX + (barWidth / ENEMY_MAX_HP) * i;
+    for (let i = 1; i < maxHp; i++) {
+        const lx = barX + (barWidth / maxHp) * i;
         ctx.beginPath();
         ctx.moveTo(lx, barY);
         ctx.lineTo(lx, barY + barHeight);
